@@ -1,0 +1,107 @@
+# Newport Harbor Sailing Simulator
+
+A browser-based 3D sailing simulator for tiller-steered keelboats on **real
+water** — Newport Harbor, Newport Beach CA first, extensible to any harbor.
+Sails a **W.D. Schock Harbor 20** with a self-tacking jib under **live wind
+from Open-Meteo**, with **man-overboard (MOB) drill scoring**.
+
+```bash
+npm install
+npm run dev        # http://localhost:5173
+npm test           # physics unit tests (vitest)
+npm run build      # typecheck + production build
+```
+
+## Controls
+
+| Input | Action |
+| --- | --- |
+| `←/→` or `A/D` | tiller (realistic mode: push right = turn left, like a real boat) |
+| `W/S` | mainsheet in/out |
+| `C` or `↓` | center the tiller |
+| `SPACE` / MOB button | drop MOB marker, start drill |
+| `E` | electric auxiliary drive |
+| `V` | chase ↔ chartplotter (north-up) view |
+| `M` | satellite ↔ chart (OSM + OpenSeaMap) basemap |
+| WIND button | live ↔ manual wind (slider panel) |
+
+## Architecture
+
+```
+src/
+  core/        pure TS physics — no DOM, deterministic, unit-testable
+    sim.ts       fixed 60 Hz integration (surge/sway/yaw/heel)
+    physics/     apparent wind, sail lift/drag (luff/stall), hull drag,
+                 keel leeway, rudder/yaw, righting moment
+    environment  true wind + OU gust process + tidal current
+  boats/       boats as data (Harbor 20 first; drop in more as configs)
+  harbors/     harbors as data (water polygons + harbor.json per harbor)
+  providers/   external data seams: WindProvider (Open-Meteo, manual),
+               AisProvider (future — see below)
+  render/      MapLibre map + Three.js custom layer (procedural Harbor 20,
+               wake, MOB marker)
+  ui/          controls (keyboard/touch), HUD instruments, MOB drill logic
+scripts/
+  fetch-harbor.ts   Overpass → src/harbors/<name>/water.json
+```
+
+### Physics highlights
+
+- True wind from the provider is rendered *apparent* per instant: gusts are an
+  Ornstein-Uhlenbeck process scaled by the reported gust excess.
+- Sails modeled with luffing (<6° angle of attack), attached flow to ~18°,
+  soft stall, and drag-plate behavior downwind. The self-tacking jib
+  auto-tracks half the apparent wind angle with an efficiency penalty at the
+  extremes (fixed traveler).
+- Hull drag has the classic wave-making knee at hull speed (5.6 kn for the
+  H20); keel leeway needs flow (no steerage way / no leeway resistance when
+  stopped); sway is solved semi-implicitly for numerical stability at 60 Hz.
+- Realistic no-go zone (~35°), tacking angles (~45°), heel-to-leeward with
+  depower, weather helm that grows with heel.
+
+### Adding a harbor
+
+```bash
+npx tsx scripts/fetch-harbor.ts <name> <south> <west> <north> <east>
+```
+
+Then create `src/harbors/<name>/harbor.json` (anchor, start pose, current,
+marks, optional `openWater` / `excludeBboxes` patches for OSM quirks) and
+register it in `src/harbors/registry.ts`. Collision is point-in-polygon over
+the water polygons with holes (islands), on a precomputed spatial grid.
+
+### Adding a boat
+
+Copy `src/boats/harbor20.ts`, tune the numbers, register in
+`src/boats/registry.ts`. Sail trim policies are per-sail: `{kind: "sheet"}`
+(user-trimmed) or `{kind: "selfTacking"}`.
+
+### Wind data
+
+Open-Meteo forecast API — free, keyless, CORS-open; polled every 10 minutes,
+fail-soft to the last sample, with a manual slider fallback. Marine wave data
+is available from the same provider's marine API when sea state is added.
+
+### AIS (future seam, not yet wired)
+
+`src/providers/types.ts` defines `AisProvider`/`Vessel` +
+`extrapolateVessel()` dead-reckoning. The intended first implementation is
+[aisstream.io](https://aisstream.io) — a free WebSocket AIS API (free key via
+signup): subscribe to position reports for the harbor bbox, map
+`PositionReport.Latitude/Longitude/Sog/Cog/TrueHeading` and
+`MetaData.ShipName/length/width` onto `Vessel`, render + extrapolate. No
+physics changes needed.
+
+## Known simplifications
+
+- The OSM "Newport Bay" polygon bulges over a residential corner NW of the
+  harbor (verified against OSM's own `is_in`); it's patched out of the
+  collision grid with `excludeBboxes` until OSM fixes the relation.
+- Depth/bathymetry, spatially-varying current, and tide height are future
+  work; current is a uniform vector per harbor.
+
+## Credits
+
+Wind: [Open-Meteo](https://open-meteo.com) (CC BY 4.0) · Imagery: Esri World
+Imagery · Basemap/nautical: © OpenStreetMap contributors, © OpenSeaMap
+contributors · Harbor geometry: © OpenStreetMap contributors (ODbL).

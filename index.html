@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>Newport Harbor Sailing Simulator</title>
+  </head>
+  <body>
+    <div id="map"></div>
+    <div id="hud"></div>
+
+    <div id="wind-panel" class="hidden panel">
+      <div class="panel-title">Manual wind</div>
+      <label>Speed <input id="wind-speed" type="range" min="0" max="30" step="1" value="10" /> <span>10 kn</span></label>
+      <label>Direction <input id="wind-dir" type="range" min="0" max="359" step="5" value="250" /> <span>250°</span></label>
+      <div class="hint">Wind source toggles with the WIND button.</div>
+    </div>
+
+    <div id="help-panel" class="panel">
+      <div class="panel-title">Sailing the Harbor 20</div>
+      <ul>
+        <li><b>←/→ or A/D</b> tiller (real mode: push right = turn left)</li>
+        <li><b>W/S</b> mainsheet in/out &nbsp;·&nbsp; <b>C</b> center tiller</li>
+        <li><b>SPACE</b> drop MOB marker &nbsp;·&nbsp; <b>E</b> electric drive</li>
+        <li><b>V</b> chase/chartplotter &nbsp;·&nbsp; <b>M</b> satellite/chart</li>
+        <li><b>Wheel / + / −</b> zoom (works in both views)</li>
+        <li>Keep the boat out of the no-go zone (~35° off the wind) — watch the windex.</li>
+      </ul>
+    </div>
+
+    <div id="touch-controls">
+      <div class="tc-row">
+        <button data-tiller="-1" class="tc-btn">◄ TILLER</button>
+        <button data-tiller="1" class="tc-btn">TILLER ►</button>
+      </div>
+      <div class="tc-row">
+        <button data-sheet="1" class="tc-btn">SHEET IN</button>
+        <button data-sheet="-1" class="tc-btn">SHEET OUT</button>
+      </div>
+    </div>
+
+    <div id="toolbar">
+      <button id="btn-zoomin" class="tool">ZOOM +</button>
+      <button id="btn-zoomout" class="tool">ZOOM −</button>
+      <button id="btn-clear" class="tool">CLEAR</button>
+      <button id="btn-mob" class="tool danger">MOB</button>
+      <button id="btn-aux" class="tool">E-DRIVE</button>
+      <button id="btn-view" class="tool">VIEW</button>
+      <button id="btn-map" class="tool">MAP</button>
+      <button id="btn-wind" class="tool">WIND</button>
+      <button id="btn-help" class="tool">HELP</button>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

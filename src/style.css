@@ -1,0 +1,106 @@
+:root {
+  --bg: rgba(10, 22, 33, 0.82);
+  --fg: #dce9f2;
+  --accent: #7fdbff;
+  --warn: #ffd166;
+  --danger: #ff5a5f;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
+#map { position: absolute; inset: 0; }
+
+#hud { position: absolute; top: 12px; left: 12px; right: auto; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+.hud-panel {
+  background: var(--bg);
+  color: var(--fg);
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(127, 219, 255, 0.25);
+  backdrop-filter: blur(6px);
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  min-width: 250px;
+}
+.hud-title { font-weight: 700; letter-spacing: 0.08em; margin-bottom: 4px; color: var(--warn); }
+.hud-table { display: grid; grid-template-columns: auto auto; gap: 2px 12px; flex: 1; }
+.hud-row { display: contents; }
+.hud-label { color: #8fb2c9; font-size: 11px; align-self: center; }
+.hud-value { text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; }
+
+.windex { width: 116px; flex: 0 0 auto; text-align: center; }
+.windex svg { width: 116px; height: 116px; display: block; }
+.wind-meter .dial { fill: rgba(0, 0, 0, 0.45); stroke: rgba(127, 219, 255, 0.5); }
+.wind-meter .ticks line { stroke: rgba(143, 178, 201, 0.7); stroke-width: 1.5; }
+.wind-meter .tick { fill: #8fb2c9; font-size: 8px; text-anchor: middle; }
+.wind-meter .aws-value { fill: #dce9f2; font-size: 15px; font-weight: 700; }
+.wind-meter .aws-unit { fill: #8fb2c9; font-size: 6.5px; }
+.awa-head { fill: var(--accent); }
+.awa-line { stroke: var(--accent); stroke-width: 3; }
+.twa-head { fill: var(--warn); }
+.twa-line { stroke: var(--warn); stroke-width: 2; stroke-dasharray: 3 2; }
+
+.gauge-caption {
+  font-size: 10px; letter-spacing: 0.14em; color: #8fb2c9; margin-top: 2px;
+}
+
+.tiller-gauge { width: 100px; flex: 0 0 auto; text-align: center; }
+.tiller-gauge svg { width: 100px; height: 100px; display: block; }
+.tiller-gauge .boat-top { fill: rgba(127, 219, 255, 0.18); stroke: rgba(127, 219, 255, 0.5); }
+.tiller-arm { stroke: #ff9f6e; stroke-width: 4; stroke-linecap: round; }
+.tiller-tip { fill: #ff9f6e; }
+.tiller-pivot { fill: #dce9f2; }
+
+.mob-panel { border-color: rgba(255, 90, 95, 0.5); }
+.mob-panel.good { border-color: rgba(126, 217, 87, 0.6); }
+
+.alert {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+  background: var(--bg); color: var(--warn); padding: 8px 18px; border-radius: 999px;
+  border: 1px solid rgba(255, 209, 102, 0.4); font-size: 13px;
+}
+
+#toolbar {
+  position: absolute; top: 12px; right: 12px; display: flex; flex-direction: column; gap: 8px;
+}
+.tool {
+  background: var(--bg); color: var(--fg); border: 1px solid rgba(127, 219, 255, 0.3);
+  border-radius: 8px; padding: 9px 14px; font: inherit; font-size: 12px; letter-spacing: 0.05em;
+  cursor: pointer; backdrop-filter: blur(6px);
+}
+.tool:hover { border-color: var(--accent); color: var(--accent); }
+.tool.danger { border-color: rgba(255, 90, 95, 0.55); color: #ffb3b5; }
+.tool.danger:hover { border-color: var(--danger); color: var(--danger); }
+
+.panel {
+  position: absolute; top: 64px; right: 12px; width: 260px;
+  background: var(--bg); color: var(--fg); padding: 12px 16px; border-radius: 10px;
+  border: 1px solid rgba(127, 219, 255, 0.25); font-size: 12px;
+}
+.panel-title { font-weight: 700; color: var(--accent); margin-bottom: 8px; letter-spacing: 0.06em; }
+.panel label { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.panel input[type="range"] { flex: 1; }
+.panel .hint { color: #8fb2c9; margin-top: 8px; }
+.panel ul { margin: 0; padding-left: 16px; line-height: 1.7; }
+.panel b { color: var(--warn); }
+
+#touch-controls {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 8px; opacity: 0.9;
+}
+.tc-row { display: flex; gap: 8px; }
+.tc-btn {
+  background: var(--bg); color: var(--fg); border: 1px solid rgba(127, 219, 255, 0.3);
+  border-radius: 10px; padding: 12px 18px; font: inherit; font-size: 12px;
+  touch-action: none; user-select: none;
+}
+.tc-btn:active { background: rgba(127, 219, 255, 0.25); }
+
+.hidden { display: none !important; }
+
+@media (max-width: 700px) {
+  .hud-panel { min-width: 0; }
+  .windex { width: 64px; height: 64px; }
+}

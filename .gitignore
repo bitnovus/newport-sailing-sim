@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.zcode/
+.DS_Store
+*.local
