@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { Sim } from "../src/core/sim";
 import { Environment } from "../src/core/environment";
 import { harbor20 } from "../src/boats/harbor20";
-import { kn, toKn } from "../src/core/units";
+import { kn, toKn, wrapDeg, DEG } from "../src/core/units";
 import { idealBoomAngle, luffFraction, sailCoefficients, solveSail } from "../src/core/physics/sails";
 
 const DT = 1 / 60;
@@ -120,6 +120,65 @@ describe("steady-state sailing (mini polar)", () => {
 });
 
 describe("dynamic behavior", () => {
+  it("port→starboard tack goes through the wind, never the lee", () => {
+    const sim = makeSim(12, 30); // wind from 030
+    sim.state.heading = 70 * DEG; // close-hauled PORT: TWA = -40, boom to stbd
+    sailFor(sim, 60, 70);
+    expect(Math.sign(sim.telemetry().awa)).toBe(-1);
+
+    // tiller + = push to starboard = toward the sail on a port tack → come about
+    let closestToWind = 180;
+    let closestToLee = 180;
+    let boomAtCross = 0;
+    let crossed = false;
+    let crossStep = -1;
+    const steps = Math.round(12 / DT);
+    for (let i = 0; i < steps; i++) {
+      sim.step(DT, { tiller: 0.7, sheetTargetDeg: 25, auxOn: false });
+      const tel = sim.telemetry();
+      closestToWind = Math.min(closestToWind, Math.abs(wrapDeg(tel.headingDeg - 30)));
+      closestToLee = Math.min(closestToLee, Math.abs(wrapDeg(tel.headingDeg - 210)));
+      if (!crossed && Math.abs(tel.awa) < 20) {
+        crossed = true;
+        boomAtCross = sim.state.boomDeg.main;
+        crossStep = i;
+      }
+    }
+    // the bow passed head-to-wind (the wind direction itself)…
+    expect(closestToWind).toBeLessThan(25);
+    // …and never approached the dead-run direction — this was a tack, not a jibe
+    expect(closestToLee).toBeGreaterThan(90);
+    // still the old boom side entering the no-go cone; flipped after the bow crossed
+    // (physics boom sign follows the WIND side; the renderer mirrors to leeward)
+    expect(boomAtCross).toBeLessThan(0);
+    const after = Math.round(1.5 / DT);
+    for (let i = crossStep; i < Math.min(crossStep + after, steps); i++) {
+      sim.step(DT, { tiller: 0, sheetTargetDeg: 25, auxOn: false });
+    }
+    expect(sim.state.boomDeg.main).toBeGreaterThan(0);
+    expect(Math.sign(sim.telemetry().awa)).toBe(1); // now the starboard tack
+  }, 30000);
+
+  it("starboard→port tack mirrors correctly", () => {
+    const sim = makeSim(12, 30);
+    sim.state.heading = 350 * DEG; // close-hauled STBD: TWA = +40, boom to port
+    sailFor(sim, 60, 350);
+    expect(Math.sign(sim.telemetry().awa)).toBe(1);
+
+    let closestToWind = 180;
+    let closestToLee = 180;
+    for (let i = 0; i < 12 / DT; i++) {
+      sim.step(DT, { tiller: -0.7, sheetTargetDeg: 25, auxOn: false }); // tiller to port, toward the sail
+      const tel = sim.telemetry();
+      closestToWind = Math.min(closestToWind, Math.abs(wrapDeg(tel.headingDeg - 30)));
+      closestToLee = Math.min(closestToLee, Math.abs(wrapDeg(tel.headingDeg - 210)));
+    }
+    expect(closestToWind).toBeLessThan(25);
+    expect(closestToLee).toBeGreaterThan(90);
+    expect(sim.state.boomDeg.main).toBeLessThan(0); // wind now from port: boom follows
+    expect(Math.sign(sim.telemetry().awa)).toBe(-1); // now the port tack
+  }, 30000);
+
   it("tacks through the wind when carrying way", () => {
     const sim = makeSim(12, 0); // wind from N
     sim.state.heading = (315 * Math.PI) / 180; // start close-hauled, port tack
