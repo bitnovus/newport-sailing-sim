@@ -3,7 +3,7 @@ import { Sim } from "../src/core/sim";
 import { Environment } from "../src/core/environment";
 import { harbor20 } from "../src/boats/harbor20";
 import { kn, toKn } from "../src/core/units";
-import { idealBoomAngle, sailCoefficients } from "../src/core/physics/sails";
+import { idealBoomAngle, luffFraction, sailCoefficients, solveSail } from "../src/core/physics/sails";
 
 const DT = 1 / 60;
 
@@ -50,6 +50,31 @@ describe("sail aerodynamics", () => {
     const c = sailCoefficients(0);
     expect(c.cl).toBe(0);
     expect(sailCoefficients(-3).cl).toBe(0);
+  });
+
+  it("flogs instead of stalling when eased past the wind (backwind)", () => {
+    // irons with the main eased: alpha is deeply negative — cloth must flog,
+    // never act as a filled drag plate (the "pushed backward" bug)
+    const c = sailCoefficients(-79);
+    expect(c.cl).toBe(0);
+    expect(c.cd).toBeLessThan(0.45);
+    expect(luffFraction(-79)).toBe(1);
+    expect(luffFraction(-10)).toBe(1);
+    // mid-tack: wind and boom on opposite sides is backwind too
+    expect(luffFraction(25)).toBe(0);
+  });
+
+  it("head-to-wind eased sail produces no plate thrust", () => {
+    const main = harbor20.sails.find((s) => s.id === "main")!;
+    const sol = solveSail(
+      main,
+      { speed: kn(10), angle: 1, vector: { x: 0, y: 0 } },
+      80,
+      0,
+    );
+    expect(sol.luffing).toBe(true);
+    expect(sol.flow).toBe(0);
+    expect(Math.abs(sol.drive)).toBeLessThan(90); // flutter drag (~70 N), not plate thrust (~380 N)
   });
 
   it("has attached-flow lift ramp and soft stall", () => {

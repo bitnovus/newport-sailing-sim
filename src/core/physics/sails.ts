@@ -27,12 +27,20 @@ export interface SailSolution extends SailForce {
 }
 
 /**
- * Angle-of-attack aerodynamics for a Bermudan sail.
- * Luffing below ~6°, attached flow to ~22°, soft stall beyond, drag-dominated
- * by 90° (running). Returns lift and drag coefficients.
+ * Angle-of-attack aerodynamics for a Bermudan sail. `alphaDeg` is signed
+ * relative to the sail's own side: negative means the apparent wind is
+ * forward of the chord (over-eased, or backwinded mid-tack) — cloth flogs
+ * there and the steady force collapses to flutter drag, never a filled
+ * plate. Positive: luffing below ~6°, attached flow to ~22°, soft stall
+ * beyond, drag-dominated by 90° (running).
  */
 export function sailCoefficients(alphaDeg: number): { cl: number; cd: number } {
-  const a = Math.abs(alphaDeg);
+  if (alphaDeg < 0) {
+    // backwinded / flogging: no lift, modest flutter drag only
+    const a = Math.min(-alphaDeg, 90);
+    return { cl: 0, cd: 0.05 + 0.27 * (a / 90) };
+  }
+  const a = alphaDeg;
   if (a < 6) {
     // luffing: no meaningful lift, flutter drag
     return { cl: 0, cd: 0.05 + 0.1 * (a / 6) };
@@ -59,7 +67,8 @@ export function sailCoefficients(alphaDeg: number): { cl: number; cd: number } {
 
 /** Luffing fraction for visuals: 1 = fully luffing (flapping). */
 export function luffFraction(alphaDeg: number): number {
-  const a = Math.abs(alphaDeg);
+  if (alphaDeg < 0) return 1; // backwinded sail flogs hard
+  const a = alphaDeg;
   if (a >= 8) return 0;
   if (a <= 4) return 1;
   return (8 - a) / 4;
@@ -115,10 +124,12 @@ export function solveSail(
   heel: number,
 ): SailSolution {
   const awaDeg = awa.angle;
+  // incidence in the sail's own frame: positive when the wind is on the
+  // boom's side of the bow, negative when forward of the chord or on the
+  // opposite side (mid-tack backwind)
+  const boomSide = Math.sign(boomAngle) || 1;
+  const alpha = awaDeg * boomSide - Math.abs(boomAngle);
   const a = Math.abs(awaDeg);
-  const boomToWind = Math.abs(boomAngle);
-  // angle of attack of the flow on the sail chord
-  const alpha = a - boomToWind;
 
   let { cl, cd } = sailCoefficients(alpha);
   const eff = selfTackingEfficiency(sail, awaDeg);
