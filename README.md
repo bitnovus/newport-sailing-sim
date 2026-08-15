@@ -23,7 +23,14 @@ npm run build      # typecheck + production build
 | `E` | electric auxiliary drive |
 | `V` | chase ↔ chartplotter (north-up) view |
 | `M` | satellite ↔ chart (OSM + OpenSeaMap) basemap |
+| `+`/`−` / wheel / ZOOM buttons | zoom either view (chase 3D or top-down) |
+| CLEAR button | wipe the track line (in-session + saved copy) |
 | WIND button | live ↔ manual wind (slider panel) |
+
+The yellow track line persists across page reloads (`localStorage`), so a
+refresh no longer loses your sail history — CLEAR is the intentional reset.
+Touch/hold buttons at screen bottom mirror the tiller and sheet for
+mouse-only steering.
 
 ## Architecture
 
@@ -43,6 +50,8 @@ src/
   ui/          controls (keyboard/touch), HUD instruments, MOB drill logic
 scripts/
   fetch-harbor.ts   Overpass → src/harbors/<name>/water.json
+  debug-polar.ts    hold one TWA, print the polar point + traces
+  debug-downwind.ts downwind TWA sweep + jibe maneuver diagnostics
 ```
 
 ### Physics highlights
