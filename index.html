@@ -20,8 +20,10 @@
       <div class="panel-title">Sailing the Harbor 20</div>
       <ul>
         <li><b>←/→ or A/D</b> tiller (real mode: push right = turn left)</li>
+        <li><b>Tiller slider</b> holds the selected helm angle · <b>CENTER</b> returns it to 0°</li>
         <li><b>W/S</b> mainsheet in/out &nbsp;·&nbsp; <b>C</b> center tiller</li>
         <li><b>SPACE</b> drop MOB marker &nbsp;·&nbsp; <b>E</b> electric drive</li>
+        <li><b>CLEAR</b> remove the track and reset/remove the MOB marker</li>
         <li><b>V</b> chase/chartplotter &nbsp;·&nbsp; <b>M</b> satellite/chart</li>
         <li><b>Wheel / + / −</b> zoom (works in both views)</li>
         <li>Keep the boat out of the no-go zone (~35° off the wind) — watch the windex.</li>
@@ -29,9 +31,26 @@
     </div>
 
     <div id="touch-controls">
-      <div class="tc-row">
-        <button data-tiller="-1" class="tc-btn">◄ TILLER</button>
-        <button data-tiller="1" class="tc-btn">TILLER ►</button>
+      <div class="tc-helm">
+        <div class="tc-helm-head">
+          <span class="tc-helm-label">TILLER</span>
+          <output id="tiller-position" data-tiller-output for="tiller-slider">0° CENTER</output>
+          <button type="button" data-tiller-center class="tc-center-btn">CENTER</button>
+        </div>
+        <div class="tc-slider-row">
+          <span class="tc-side">PORT</span>
+          <input
+            id="tiller-slider"
+            data-tiller-slider
+            type="range"
+            min="-35"
+            max="35"
+            step="1"
+            value="0"
+            aria-label="Tiller position, port to starboard"
+          />
+          <span class="tc-side">STBD</span>
+        </div>
       </div>
       <div class="tc-row">
         <button data-sheet="1" class="tc-btn">SHEET IN</button>

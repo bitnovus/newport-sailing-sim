@@ -24,13 +24,17 @@ npm run build      # typecheck + production build
 | `V` | chase ↔ chartplotter (north-up) view |
 | `M` | satellite ↔ chart (OSM + OpenSeaMap) basemap |
 | `+`/`−` / wheel / ZOOM buttons | zoom either view (chase 3D or top-down) |
-| CLEAR button | wipe the track line (in-session + saved copy) |
+| CLEAR button | wipe the track line and remove/reset the MOB marker |
 | WIND button | live ↔ manual wind (slider panel) |
 
 The yellow track line persists across page reloads (`localStorage`), so a
-refresh no longer loses your sail history — CLEAR is the intentional reset.
-Touch/hold buttons at screen bottom mirror the tiller and sheet for
-mouse-only steering.
+refresh no longer loses your sail history — CLEAR is the intentional reset
+for both the track and MOB drill.
+MOB recovery scoring arms after the boat first separates 15 m from the marker,
+preventing an immediate recovery while stopped at the drop point.
+The tiller slider at screen bottom holds any selected helm angle; CENTER
+returns it to 0°. Touch/hold sheet buttons remain available for mouse-only
+steering.
 
 ## Architecture
 
@@ -65,6 +69,8 @@ scripts/
 - Hull drag has the classic wave-making knee at hull speed (5.6 kn for the
   H20); keel leeway needs flow (no steerage way / no leeway resistance when
   stopped); sway is solved semi-implicitly for numerical stability at 60 Hz.
+- The electric auxiliary uses a static-thrust cap plus a constant-power
+  propeller curve, calibrated to about 5 kn in calm water with unloaded sails.
 - Realistic no-go zone (~35°), tacking angles (~45°), heel-to-leeward with
   depower, weather helm that grows with heel.
 

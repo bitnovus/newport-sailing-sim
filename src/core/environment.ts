@@ -47,7 +47,10 @@ export class Environment {
     x ^= x >>> 17;
     x ^= x << 5;
     this.seed = x >>> 0;
-    return this.seed / 4294967296 + 0.5e-9;
+    // Place each uint32 at its bin midpoint so Box-Muller always receives a
+    // value strictly inside (0, 1). Adding a fixed epsilon can exceed 1 for
+    // the largest PRNG outputs and turn the gust process into NaN.
+    return (this.seed + 0.5) / 4294967296;
   }
 
   private gauss(): number {

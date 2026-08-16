@@ -3,7 +3,9 @@ import { Sim } from "../src/core/sim";
 import { Environment } from "../src/core/environment";
 import { harbor20 } from "../src/boats/harbor20";
 import { kn, toKn, wrapDeg, DEG } from "../src/core/units";
+import { auxiliaryThrust } from "../src/core/physics/hydro";
 import { idealBoomAngle, luffFraction, sailCoefficients, solveSail } from "../src/core/physics/sails";
+import { MobDrill, MOB_ARM_DISTANCE_M } from "../src/ui/hud";
 
 const DT = 1 / 60;
 
@@ -44,6 +46,36 @@ function polarPoint(windKn: number, twaDeg: number): number {
   const t = sailFor(sim, 120, twaDeg);
   return t.sog;
 }
+
+describe("Harbor 20 class specification", () => {
+  it("uses the published class-ready weight and sail plan", () => {
+    const poundsToKg = 0.45359237;
+    const squareFeetToSquareMeters = 0.09290304;
+    const main = harbor20.sails.find((sail) => sail.id === "main")!;
+    const jib = harbor20.sails.find((sail) => sail.id === "jib")!;
+
+    expect(harbor20.mass).toBeCloseTo(1950 * poundsToKg, 1);
+    expect(main.area).toBeCloseTo(153 * squareFeetToSquareMeters, 2);
+    expect(jib.area).toBeCloseTo(77 * squareFeetToSquareMeters, 2);
+  });
+});
+
+describe("wind environment", () => {
+  it("keeps Gaussian gusts finite at the PRNG's upper endpoint", () => {
+    // This seed's first xorshift output is 0xffffffff, the exact case that
+    // previously rounded above 1 before the Box-Muller transform.
+    const env = new Environment(
+      { speed: kn(12), directionFrom: 250, gust: kn(16), source: "test" },
+      1584200935,
+    );
+
+    for (let i = 0; i < 120; i++) {
+      const wind = env.windAt(i * DT, DT);
+      expect(Number.isFinite(wind.speed)).toBe(true);
+      expect(Number.isFinite(wind.directionFrom)).toBe(true);
+    }
+  });
+});
 
 describe("sail aerodynamics", () => {
   it("luffs below the luffing threshold", () => {
@@ -212,6 +244,28 @@ describe("dynamic behavior", () => {
     expect(sim.telemetry().sog).toBeGreaterThan(1.5);
   }, 30000);
 
+  it("carries a 15° helm tack through the no-go zone in modest wind", () => {
+    const sim = makeSim(8, 0); // wind from N
+    sim.state.heading = 315 * DEG;
+
+    // Reproduce the interactive default rather than idealizing the sheet trim.
+    for (let i = 0; i < 60 / DT; i++) {
+      sim.step(DT, { tiller: headingHold(sim, 315), sheetTargetDeg: 25, auxOn: false });
+    }
+    expect(sim.telemetry().sog).toBeGreaterThan(2);
+
+    const tillerFor15Deg = -15 / harbor20.rudder.maxEffectiveAngle;
+    let minSog = Infinity;
+    for (let i = 0; i < 20 / DT; i++) {
+      sim.step(DT, { tiller: tillerFor15Deg, sheetTargetDeg: 25, auxOn: false });
+      minSog = Math.min(minSog, sim.telemetry().sog);
+    }
+
+    // Wind is 000°, so 035° is the far edge of the documented ±35° no-go cone.
+    expect(sim.state.heading / DEG).toBeGreaterThan(395);
+    expect(minSog).toBeGreaterThan(0.5);
+  }, 30000);
+
   it("sweeps the boom across at a finite rate during a tack (no teleport)", () => {
     const sim = makeSim(12, 0); // wind from N
     sim.state.heading = (315 * Math.PI) / 180; // close-hauled, starboard tack (AWA +45)
@@ -291,18 +345,90 @@ describe("grounding", () => {
 });
 
 describe("electric auxiliary", () => {
-  it("moves the boat with sails slack in no wind", () => {
-    const sim = makeSim(0.5, 0);
-    sailFor(sim, 40, 0);
-    expect(sim.telemetry().sog).toBeLessThan(0.8);
-    for (let i = 0; i < 60 / DT; i++) {
+  const motorSpeedAfter = (dt: number, seconds = 180): number => {
+    const sim = makeSim(0, 0);
+    for (let i = 0; i < seconds / dt; i++) {
+      sim.step(dt, { tiller: 0, sheetTargetDeg: 85, auxOn: true });
+    }
+    return toKn(sim.state.u);
+  };
+
+  it("reaches the published approximately 5 kn in calm water", () => {
+    const speed = motorSpeedAfter(DT);
+    expect(speed).toBeGreaterThan(4.85);
+    expect(speed).toBeLessThan(5.15);
+  }, 30000);
+
+  it("uses a capped, power-limited thrust curve", () => {
+    expect(auxiliaryThrust(harbor20, -1)).toBeCloseTo(harbor20.auxiliaryThrust);
+    expect(auxiliaryThrust(harbor20, 0)).toBeCloseTo(harbor20.auxiliaryThrust);
+    expect(auxiliaryThrust(harbor20, kn(5))).toBeLessThan(harbor20.auxiliaryThrust);
+    expect(auxiliaryThrust(harbor20, kn(5))).toBeGreaterThan(0);
+  });
+
+  it("has stable steady speed at 60 and 120 Hz", () => {
+    const at60Hz = motorSpeedAfter(1 / 60);
+    const at120Hz = motorSpeedAfter(1 / 120);
+    expect(Math.abs(at60Hz - at120Hz)).toBeLessThan(0.02);
+  }, 30000);
+
+  it("provides rudder steerage while maintaining powered way", () => {
+    const sim = makeSim(0, 0);
+    for (let i = 0; i < 30 / DT; i++) {
       sim.step(DT, { tiller: 0, sheetTargetDeg: 85, auxOn: true });
     }
-    expect(toKn(sim.state.u)).toBeGreaterThan(2.5);
+    const initialHeading = sim.telemetry().headingDeg;
+    for (let i = 0; i < 3 / DT; i++) {
+      sim.step(DT, {
+        tiller: -10 / harbor20.rudder.maxEffectiveAngle,
+        sheetTargetDeg: 85,
+        auxOn: true,
+      });
+    }
+
+    expect(sim.telemetry().headingDeg - initialHeading).toBeGreaterThan(20);
+    expect(toKn(sim.state.u)).toBeGreaterThan(4);
   }, 30000);
 });
 
 describe("MOB marker drift", () => {
+  it("cannot recover until the boat first sails 15 m away", () => {
+    const drill = new MobDrill();
+    const stopped = makeSim(0, 0).telemetry();
+    drill.drop();
+
+    drill.update(DT, stopped, 0, 0);
+    expect(drill.status.recovered).toBe(false);
+    expect(drill.status.armed).toBe(false);
+
+    // Even re-entering the recovery circle cannot score before departure.
+    drill.update(5, stopped, 180, 4);
+    expect(drill.status.recovered).toBe(false);
+
+    drill.update(5, stopped, 180, MOB_ARM_DISTANCE_M);
+    expect(drill.status.armed).toBe(true);
+    expect(drill.status.recovered).toBe(false);
+
+    drill.update(5, { ...stopped, sog: 0.5 }, 0, 4);
+    expect(drill.status.recovered).toBe(true);
+    expect(drill.status.result?.timeSec).toBeCloseTo(15 + DT);
+    expect(drill.status.result?.closestM).toBe(4);
+  });
+
+  it("keeps marker IDs unique and supports a complete drill clear", () => {
+    const sim = makeSim(8, 0);
+    const first = sim.dropFloat("mob");
+    sim.state.pos = { x: 12, y: -4 };
+    const replacement = sim.dropFloat("mob");
+
+    expect(replacement).not.toBe(first);
+    expect(sim.floats).toEqual([replacement]);
+    expect(replacement.pos).toEqual({ x: 12, y: -4 });
+    expect(sim.removeFloat("mob")).toBe(true);
+    expect(sim.floats).toEqual([]);
+    expect(sim.removeFloat("mob")).toBe(false);
+  });
+
   it("drifts downwind faster than nothing and with the current", () => {
     const env = new Environment({
       speed: kn(12),

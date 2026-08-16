@@ -30,8 +30,9 @@ const deg = (d: number) => d * DEG;
 
 /**
  * Apparent wind = true wind vector − boat velocity through the air.
- * (Leeway affects the boat's velocity vector; ground-vs-water is handled by
- * the caller supplying boat velocity through the WATER here.)
+ * Leeway and current both affect the boat's ground-frame velocity; because
+ * meteorological true wind is earth-relative, the caller supplies that full
+ * ground velocity here.
  */
 export function apparentWind(
   tw: TrueWind,

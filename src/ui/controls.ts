@@ -16,6 +16,9 @@ export class Controls {
   realisticTiller = true;
   private keys = new Set<string>();
   private touchTiller = 0;
+  private readonly maxTillerDeg: number;
+  private tillerSlider: HTMLInputElement | null = null;
+  private tillerOutput: HTMLOutputElement | null = null;
 
   private readonly onKeyDown = (e: KeyboardEvent) => {
     if (e.target instanceof HTMLInputElement) return;
@@ -24,13 +27,30 @@ export class Controls {
   };
   private readonly onKeyUp = (e: KeyboardEvent) => this.keys.delete(e.key.toLowerCase());
 
-  constructor() {
+  constructor(maxTillerDeg = 35) {
+    this.maxTillerDeg = Math.max(1, Math.abs(maxTillerDeg));
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
   }
 
-  /** Wire touch/pointing buttons (data-tiller / data-sheet attributes). */
+  /** Wire the persistent tiller slider and the hold-to-adjust sheet buttons. */
   bindHoldButtons(root: HTMLElement): void {
+    this.tillerSlider = root.querySelector<HTMLInputElement>("[data-tiller-slider]");
+    this.tillerOutput = root.querySelector<HTMLOutputElement>("[data-tiller-output]");
+
+    if (this.tillerSlider) {
+      this.tillerSlider.min = String(-this.maxTillerDeg);
+      this.tillerSlider.max = String(this.maxTillerDeg);
+      this.tillerSlider.value = "0";
+      this.tillerSlider.addEventListener("input", () => {
+        this.setTouchTillerDegrees(Number(this.tillerSlider?.value ?? 0));
+      });
+    }
+    root.querySelector<HTMLElement>("[data-tiller-center]")?.addEventListener("click", () => {
+      this.setTouchTillerDegrees(0);
+    });
+    this.setTouchTillerDegrees(0);
+
     root.querySelectorAll<HTMLElement>("[data-tiller], [data-sheet]").forEach((el) => {
       const start = (e: Event) => {
         e.preventDefault();
@@ -46,6 +66,21 @@ export class Controls {
       el.addEventListener("pointerleave", end);
       el.addEventListener("pointercancel", end);
     });
+  }
+
+  private setTouchTillerDegrees(degrees: number): void {
+    const bounded = Math.max(-this.maxTillerDeg, Math.min(this.maxTillerDeg, degrees));
+    this.touchTiller = bounded / this.maxTillerDeg;
+
+    if (this.tillerSlider && Number(this.tillerSlider.value) !== bounded) {
+      this.tillerSlider.value = String(bounded);
+    }
+
+    const rounded = Math.round(Math.abs(bounded));
+    const position =
+      rounded === 0 ? "0° CENTER" : `${rounded}° ${bounded < 0 ? "PORT" : "STBD"}`;
+    if (this.tillerOutput) this.tillerOutput.textContent = position;
+    this.tillerSlider?.setAttribute("aria-valuetext", position);
   }
 
   private sheetDir = 0;
@@ -66,7 +101,10 @@ export class Controls {
     const target = t;
     this.state.tiller += (target - this.state.tiller) * (1 - Math.exp(-dt * rate));
 
-    if (k.has("arrowdown") || k.has("c")) this.state.tiller *= Math.exp(-dt * 8);
+    if (k.has("arrowdown") || k.has("c")) {
+      this.setTouchTillerDegrees(0);
+      this.state.tiller *= Math.exp(-dt * 8);
+    }
 
     // sheet: +1 = trim IN (boom toward centerline, smaller angle)
     let sheet = 0;

@@ -56,9 +56,18 @@ export function rudderForces(boat: BoatDefinition, u: number, deltaDeg: number):
   return { yaw, drag };
 }
 
-/** Yaw damping from the hull resisting rotation (linear + quadratic). */
+/**
+ * Yaw damping from forward-flow resistance plus the hull's rotational
+ * crossflow. The crossflow term depends on yaw rate rather than forward speed,
+ * so a boat carrying rotation through a tack does not hit an artificial
+ * speed-independent linear brake as its surge speed approaches zero.
+ */
 export function yawDamping(u: number, r: number): number {
-  return -(1800 * (1 + u) * r + 4000 * Math.abs(r) * r * u);
+  const forwardFlow = Math.max(0, u);
+  const lowSpeedFlow = Math.min(1, forwardFlow);
+  const linearFlow = forwardFlow + lowSpeedFlow * lowSpeedFlow;
+  const crossflow = 0.5 + forwardFlow;
+  return -(1800 * linearFlow * r + 4000 * crossflow * Math.abs(r) * r);
 }
 
 /**
@@ -85,8 +94,15 @@ export function heelStep(
   return { heel: clamp(newHeel, -75 * DEG, 75 * DEG), heelRate: newRate };
 }
 
-/** Electric auxiliary thrust (N) with falloff toward hull speed. */
+/**
+ * Electric auxiliary thrust, N. At low speed the propeller is limited by its
+ * static thrust; once under way it is limited by effective propulsive power
+ * (P = Fv). This avoids both an infinite force at zero speed and the previous
+ * arbitrary linear fade that made full throttle top out far below its target.
+ */
 export function auxiliaryThrust(boat: BoatDefinition, u: number): number {
-  if (boat.auxiliaryThrust <= 0) return 0;
-  return boat.auxiliaryThrust * Math.max(0, 1 - u / 3.1);
+  if (boat.auxiliaryThrust <= 0 || boat.auxiliaryPower <= 0) return 0;
+  const forwardSpeed = Math.max(0, u);
+  const powerLimitedThrust = boat.auxiliaryPower / Math.max(forwardSpeed, 0.1);
+  return Math.min(boat.auxiliaryThrust, powerLimitedThrust);
 }

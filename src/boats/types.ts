@@ -34,7 +34,7 @@ export interface BoatDefinition {
   lwl: number;
   beam: number;
   draft: number;
-  /** Total sailing displacement, kg. */
+  /** Simulated sailing mass, kg; each boat definition documents its included load. */
   mass: number;
   /** Rotational inertia in yaw, kg·m². */
   yawInertia: number;
@@ -64,6 +64,8 @@ export interface BoatDefinition {
     rateLimit: number;
   };
   sails: SailDefinition[];
-  /** Electric auxiliary thrust, N (0 = none). Harbor 20s ship with an electric drive. */
+  /** Maximum static electric-auxiliary thrust, N (0 = none). */
   auxiliaryThrust: number;
+  /** Effective propulsive power delivered to the water, W (0 = none). */
+  auxiliaryPower: number;
 }

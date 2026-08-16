@@ -128,7 +128,7 @@ setInterval(() => {
 }, 250);
 
 // ---- UI ----
-const controls = new Controls();
+const controls = new Controls(boat.rudder.maxEffectiveAngle);
 controls.bindHoldButtons(document.getElementById("touch-controls")!);
 const hud = new Hud();
 const drill = new MobDrill();
@@ -146,6 +146,9 @@ buttons.zoomout?.addEventListener("click", () => {
   hud.flash(`Zoom ${rig.nudgeZoom(-0.6).toFixed(1)}`, 700);
 });
 buttons.clear?.addEventListener("click", () => {
+  const mobCleared = sim.removeFloat("mob");
+  drill.reset();
+  hud.updateMob(drill.status);
   track.length = 0;
   try {
     localStorage.removeItem(TRACK_KEY);
@@ -157,7 +160,7 @@ buttons.clear?.addEventListener("click", () => {
     properties: {},
     geometry: { type: "LineString", coordinates: [] },
   });
-  hud.flash("Track cleared");
+  hud.flash(mobCleared ? "Track and MOB cleared" : "Track cleared");
 });
 
 buttons.mob?.addEventListener("click", () => {
@@ -166,7 +169,9 @@ buttons.mob?.addEventListener("click", () => {
     drill.drop();
     hud.flash("MOB marker dropped — practice your return!");
   } else {
+    sim.removeFloat("mob");
     drill.reset();
+    hud.updateMob(drill.status);
     hud.flash("MOB drill reset");
   }
 });

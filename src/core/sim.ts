@@ -126,6 +126,9 @@ export class Sim {
   }
 
   dropFloat(id: string, windage = 0.025): FloatingObject {
+    // IDs identify UI-tracked objects, so starting a fresh drill replaces a
+    // stale/recovered marker instead of leaving duplicates behind.
+    this.removeFloat(id);
     const f: FloatingObject = {
       id,
       pos: { ...this.state.pos },
@@ -134,6 +137,13 @@ export class Sim {
     };
     this.floats.push(f);
     return f;
+  }
+
+  /** Remove every floating object with this ID. Returns true if one existed. */
+  removeFloat(id: string): boolean {
+    const before = this.floats.length;
+    this.floats = this.floats.filter((f) => f.id !== id);
+    return this.floats.length !== before;
   }
 
   private trueWind: TrueWind = { speed: 0, directionFrom: 0 };

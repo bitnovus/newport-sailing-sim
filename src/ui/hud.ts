@@ -1,7 +1,11 @@
 import type { Telemetry } from "../core/sim";
 
+export const MOB_ARM_DISTANCE_M = 15;
+
 export interface MobStatus {
   active: boolean;
+  /** True after the boat has moved far enough away to begin a return. */
+  armed: boolean;
   timeSec: number;
   bearing: number;
   distance: number;
@@ -128,7 +132,7 @@ export class Hud {
     this.rows.twd.textContent = `${fmt((twd => ((twd % 360) + 360) % 360)(tel.twd), 0)}°`;
     this.rows.heel.textContent = `${fmt(Math.abs(tel.heelDeg), 0)}° ${tel.heelDeg >= 0 ? "S" : "P"}`;
     this.rows.sheet.textContent = `${fmt(tel.sheetDeg, 0)}°`;
-    const tillerDeg = Math.round(Math.abs(tiller) * 100 * 0.25); // tiller arc ±25°
+    const tillerDeg = Math.round(Math.abs(tiller) * 35); // tiller arc ±35° hard-over
     this.rows.tiller.textContent =
       Math.abs(tiller) < 0.03
         ? "centered"
@@ -163,6 +167,9 @@ export class Hud {
     if (m.recovered && m.result) {
       this.rows["mob-status"].textContent = `RECOVERED in ${m.result.timeSec.toFixed(0)}s · closest ${m.result.closestM.toFixed(0)} m`;
       this.mobPanel.classList.add("good");
+    } else if (!m.armed) {
+      this.rows["mob-status"].textContent = `SAIL AWAY — arm at ${MOB_ARM_DISTANCE_M} m`;
+      this.mobPanel.classList.remove("good");
     } else {
       this.rows["mob-status"].textContent = m.distance < 30 ? "CLOSE — slow down" : "keep a lookout";
       this.mobPanel.classList.remove("good");
@@ -178,16 +185,38 @@ export class Hud {
 
 /** MOB drill state machine (drop → track → recover → score). */
 export class MobDrill {
-  status: MobStatus = { active: false, timeSec: 0, bearing: 0, distance: 0, recovered: false };
+  status: MobStatus = {
+    active: false,
+    armed: false,
+    timeSec: 0,
+    bearing: 0,
+    distance: 0,
+    recovered: false,
+  };
   private closest = Infinity;
 
   drop(): void {
-    this.status = { active: true, timeSec: 0, bearing: 0, distance: 0, recovered: false };
+    this.status = {
+      active: true,
+      armed: false,
+      timeSec: 0,
+      bearing: 0,
+      distance: 0,
+      recovered: false,
+    };
     this.closest = Infinity;
   }
 
   reset(): void {
-    this.status = { active: false, timeSec: 0, bearing: 0, distance: 0, recovered: false };
+    this.status = {
+      active: false,
+      armed: false,
+      timeSec: 0,
+      bearing: 0,
+      distance: 0,
+      recovered: false,
+    };
+    this.closest = Infinity;
   }
 
   update(dt: number, tel: Telemetry, bearing: number, distance: number): void {
@@ -196,6 +225,18 @@ export class MobDrill {
     s.timeSec += dt;
     s.bearing = bearing;
     s.distance = distance;
+
+    // The marker is dropped at the boat, so recovery must not be possible
+    // until the crew has actually sailed away. Start closest-approach scoring
+    // only once the return is armed; otherwise every drill scores 0 m.
+    if (!s.armed) {
+      if (distance >= MOB_ARM_DISTANCE_M) {
+        s.armed = true;
+        this.closest = distance;
+      }
+      return;
+    }
+
     this.closest = Math.min(this.closest, distance);
     if (distance < 5 && tel.sog < 1) {
       s.recovered = true;
