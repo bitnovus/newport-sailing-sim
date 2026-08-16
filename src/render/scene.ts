@@ -110,7 +110,9 @@ export class SceneLayer implements CustomLayerInterface {
       Math.sin(t * 1.2) * 0.035 * seaAmp + Math.sin(t * 2.7 + 1) * 0.015 * seaAmp,
     );
     this.boat.root.rotation.z = s.heading - Math.PI / 2;
-    this.boat.hull.rotation.x = s.heel + Math.sin(t * 1.1 + 0.5) * 0.02 * seaAmp;
+    // roll about local X (bow): +heel = starboard-down, but +rotation.x lifts
+    // the local +Y (starboard) beam — negate so she heels to leeward on screen
+    this.boat.hull.rotation.x = -s.heel + Math.sin(t * 1.1 + 0.5) * 0.02 * seaAmp;
     this.boat.hull.rotation.y = Math.sin(t * 0.9) * 0.012 * seaAmp;
 
     // exaggerate the hull when zoomed out so the boat reads at harbor scale:
