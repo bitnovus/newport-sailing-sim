@@ -179,6 +179,24 @@ describe("dynamic behavior", () => {
     expect(Math.sign(sim.telemetry().awa)).toBe(-1); // now the port tack
   }, 30000);
 
+  it("heels to the new leeward after tacking", () => {
+    const sim = makeSim(12, 30); // wind from 030
+    sim.state.heading = 70 * DEG; // port close-hauled: leeward = starboard (+)
+    sailFor(sim, 60, 70);
+    const heelBefore = sim.telemetry().heelDeg;
+    expect(heelBefore).toBeGreaterThan(5); // carried starboard heel on port tack
+
+    let minAbsHeel = 180; // must pass near-flat through the wind
+    for (let i = 0; i < 6 / DT; i++) {
+      sim.step(DT, { tiller: 0.7, sheetTargetDeg: 25, auxOn: false });
+      minAbsHeel = Math.min(minAbsHeel, Math.abs(sim.telemetry().heelDeg));
+    }
+    sailFor(sim, 45, 350); // settle on the starboard tack
+    const heelAfter = sim.telemetry().heelDeg;
+    expect(minAbsHeel).toBeLessThan(6); // rolled through ~flat in the cone
+    expect(heelAfter).toBeLessThan(-5); // now port-down (leeward) on stbd tack
+  }, 30000);
+
   it("tacks through the wind when carrying way", () => {
     const sim = makeSim(12, 0); // wind from N
     sim.state.heading = (315 * Math.PI) / 180; // start close-hauled, port tack
