@@ -78,13 +78,40 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
   position: absolute; top: 64px; right: 12px; width: 260px;
   background: var(--bg); color: var(--fg); padding: 12px 16px; border-radius: 10px;
   border: 1px solid rgba(127, 219, 255, 0.25); font-size: 12px;
+  max-height: calc(100vh - 80px); overflow-y: auto;
 }
 .panel-title { font-weight: 700; color: var(--accent); margin-bottom: 8px; letter-spacing: 0.06em; }
+.panel-subtitle { font-weight: 700; color: var(--accent); margin: 12px 0 8px; }
 .panel label { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
 .panel input[type="range"] { flex: 1; }
 .panel .hint { color: #8fb2c9; margin-top: 8px; }
 .panel ul { margin: 0; padding-left: 16px; line-height: 1.7; }
 .panel b { color: var(--warn); }
+.beta-warning {
+  margin: 0;
+  padding: 9px 10px;
+  color: #ffe4a3;
+  background: rgba(255, 209, 102, 0.1);
+  border: 1px solid rgba(255, 209, 102, 0.32);
+  border-radius: 7px;
+  line-height: 1.45;
+}
+.legal-copy {
+  margin-top: 12px;
+  padding-top: 10px;
+  color: #a9c1d1;
+  border-top: 1px solid rgba(127, 219, 255, 0.2);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.legal-copy p { margin: 0 0 8px; }
+.legal-copy p:last-child { margin-bottom: 0; }
+.legal-copy a,
+.maplibregl-ctrl-attrib a { color: var(--accent); }
+.maplibregl-ctrl-attrib {
+  max-width: calc(100vw - 8px);
+  white-space: normal;
+}
 
 #touch-controls {
   position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
@@ -114,6 +141,12 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+.tc-jib-section {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(127, 219, 255, 0.18);
+}
+.tc-jib-head { grid-template-columns: 1fr auto; }
 .tc-center-btn {
   padding: 5px 8px;
   color: var(--warn);
@@ -152,4 +185,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 @media (max-width: 700px) {
   .hud-panel { min-width: 0; }
   .windex { width: 64px; height: 64px; }
+  .panel { width: min(280px, calc(100vw - 24px)); }
+  .maplibregl-ctrl-attrib { font-size: 9px; line-height: 12px; }
 }

@@ -5,8 +5,10 @@ import "maplibre-gl/dist/maplibre-gl.css";
 export type BaseStyle = "satellite" | "chart";
 export type ViewMode = "chase" | "chartplotter";
 
-const ESRI_ATTR = "Imagery © Esri, Maxar, Earthstar Geographics";
-const OSM_ATTR = "© OpenStreetMap contributors";
+const ESRI_ATTR =
+  'Imagery © <a href="https://www.esri.com/">Esri</a>, Maxar, Earthstar Geographics';
+export const OSM_ATTR =
+  'Harbor/map data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>';
 
 /**
  * Map canvas: Esri World Imagery satellite by default, OSM standard +
@@ -21,7 +23,7 @@ export function createMap(container: HTMLElement, center: { lng: number; lat: nu
     zoom: 16.5,
     pitch: 60,
     bearing: 0,
-    attributionControl: { compact: true },
+    attributionControl: { compact: false },
     maxPitch: 80,
   });
 
@@ -59,7 +61,8 @@ export function setBaseStyle(map: MLMap, style: BaseStyle): void {
       type: "raster",
       tiles: ["https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png"],
       tileSize: 256,
-      attribution: "© OpenSeaMap contributors",
+      attribution:
+        'Seamarks © <a href="https://www.openseamap.org/">OpenSeaMap contributors</a>',
     });
     map.addLayer({ id: "openseamap", type: "raster", source: "openseamap" });
   }

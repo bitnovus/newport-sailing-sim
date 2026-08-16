@@ -25,17 +25,26 @@ function runTack(maxDeg: number): void {
 
   // settle on the wind first
   let sheet = 25;
+  let jib = 15;
   for (let i = 0; i < 60 / DT; i++) {
     const tel = sim.telemetry();
-    if (i % 60 === 0) sheet = Math.abs(idealBoomAngle(tel.awa));
-    sim.step(DT, { tiller: headingHold(sim, 315), sheetTargetDeg: sheet, auxOn: false });
+    if (i % 60 === 0) {
+      sheet = Math.abs(idealBoomAngle(tel.awa));
+      jib = Math.abs(tel.awa) / 2;
+    }
+    sim.step(DT, {
+      tiller: headingHold(sim, 315),
+      sheetTargetDeg: sheet,
+      jibTargetDeg: jib,
+      auxOn: false,
+    });
   }
 
   const t0 = sim.telemetry();
   console.log(`\n=== rudder max ${maxDeg}° — entering tack at ${t0.sog.toFixed(2)} kn ===`);
   console.log("  t     hdg    sog   rudderDrag  hullDrag   drive");
   for (let i = 0; i < 10 / DT; i++) {
-    sim.step(DT, { tiller: -0.7, sheetTargetDeg: 10, auxOn: false });
+    sim.step(DT, { tiller: -0.7, sheetTargetDeg: 10, jibTargetDeg: 15, auxOn: false });
     if (i % (0.5 / DT) === 0) {
       const t = sim.telemetry();
       const rf = rudderForces(boat, sim.state.u, sim.state.rudderDeg);

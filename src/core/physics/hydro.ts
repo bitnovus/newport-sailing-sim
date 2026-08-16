@@ -33,6 +33,8 @@ export function leewayDrag(u: number, v: number): number {
 }
 
 export interface RudderForces {
+  /** Lateral force on the hull, N (+ = toward starboard). */
+  side: number;
   /** Yaw moment, N·m (+ = bow turns to starboard). */
   yaw: number;
   /** Induced drag from a hard-over rudder, N (always opposes motion). */
@@ -51,9 +53,13 @@ export function rudderForces(boat: BoatDefinition, u: number, deltaDeg: number):
   // flat-plate-ish lift with stall plateau
   const cl = Math.min(2.2, 0.11 * eff);
   const lift = 0.5 * WATER_DENSITY * boat.rudder.area * cl * flow * flow;
-  const yaw = lift * boat.rudder.arm * Math.sign(deltaDeg);
+  // A positive deflection pushes the stern to port, turning the bow to
+  // starboard. Preserve that lateral force so the rudder can share the keel's
+  // leeway load instead of contributing yaw alone.
+  const side = -lift * Math.sign(deltaDeg);
+  const yaw = -side * boat.rudder.arm;
   const drag = -220 * (eff * DEG) ** 2 * flow * flow;
-  return { yaw, drag };
+  return { side, yaw, drag };
 }
 
 /**
@@ -67,7 +73,9 @@ export function yawDamping(u: number, r: number): number {
   const lowSpeedFlow = Math.min(1, forwardFlow);
   const linearFlow = forwardFlow + lowSpeedFlow * lowSpeedFlow;
   const crossflow = 0.5 + forwardFlow;
-  return -(1800 * linearFlow * r + 4000 * crossflow * Math.abs(r) * r);
+  // Preserve enough angular momentum to carry a moderate-helm tack through
+  // irons while retaining strong forward-flow and hard-turn damping.
+  return -(1400 * linearFlow * r + 3000 * crossflow * Math.abs(r) * r);
 }
 
 /**

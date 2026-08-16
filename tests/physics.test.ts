@@ -3,8 +3,16 @@ import { Sim } from "../src/core/sim";
 import { Environment } from "../src/core/environment";
 import { harbor20 } from "../src/boats/harbor20";
 import { kn, toKn, wrapDeg, DEG } from "../src/core/units";
-import { auxiliaryThrust } from "../src/core/physics/hydro";
-import { idealBoomAngle, luffFraction, sailCoefficients, solveSail } from "../src/core/physics/sails";
+import { auxiliaryThrust, rudderForces } from "../src/core/physics/hydro";
+import {
+  idealBoomAngle,
+  luffFraction,
+  sailCoefficients,
+  selfTackingTrim,
+  sheetedBoomRestAngle,
+  solveSail,
+  stepSheetedBoom,
+} from "../src/core/physics/sails";
 import { MobDrill, MOB_ARM_DISTANCE_M } from "../src/ui/hud";
 
 const DT = 1 / 60;
@@ -19,14 +27,31 @@ function makeSim(windKn: number, dirFrom = 0): Sim {
   return new Sim(harbor20, env, null);
 }
 
+function makeConstantSim(windKn: number, dirFrom = 0): Sim {
+  const env = new Environment({
+    speed: kn(windKn),
+    directionFrom: dirFrom,
+    gust: kn(windKn),
+    source: "test",
+  });
+  env.windAt = () => ({ speed: kn(windKn), directionFrom: dirFrom });
+  return new Sim(harbor20, env, null);
+}
+
+/** Previous auto-trim heuristic, used when a physics test needs an ideal crew. */
+function idealJibTrim(sim: Sim): number {
+  return Math.abs(sim.telemetry().awa) / 2;
+}
+
 /** Sail with auto-trim for `seconds`, returning the final telemetry. */
 function sailFor(sim: Sim, seconds: number, headingDeg: number) {
   for (let i = 0; i < seconds / DT; i++) {
     const tel = sim.telemetry();
-    const sheet = i === 0 ? 25 : Math.abs(idealBoomAngle(tel.awa));
+    const sheet = i === 0 ? 15 : Math.abs(idealBoomAngle(tel.awa));
     sim.step(DT, {
       tiller: headingHold(sim, headingDeg),
       sheetTargetDeg: sheet,
+      jibTargetDeg: i === 0 ? 15 : idealJibTrim(sim),
       auxOn: false,
     });
   }
@@ -57,6 +82,7 @@ describe("Harbor 20 class specification", () => {
     expect(harbor20.mass).toBeCloseTo(1950 * poundsToKg, 1);
     expect(main.area).toBeCloseTo(153 * squareFeetToSquareMeters, 2);
     expect(jib.area).toBeCloseTo(77 * squareFeetToSquareMeters, 2);
+    expect(harbor20.closeHauledTwa).toBe(45);
   });
 });
 
@@ -78,6 +104,130 @@ describe("wind environment", () => {
 });
 
 describe("sail aerodynamics", () => {
+  it("uses jib trim as the self-tending club boom's outward limit", () => {
+    const jib = harbor20.sails.find((sail) => sail.id === "jib")!;
+
+    expect(selfTackingTrim(jib, 45, 20)).toBe(20);
+    expect(selfTackingTrim(jib, -45, 20)).toBe(-20);
+    expect(selfTackingTrim(jib, 45, 2)).toBe(8);
+    expect(selfTackingTrim(jib, -45, 90)).toBe(-45); // rests inside a loose sheet
+    expect(selfTackingTrim(jib, -90, 90)).toBe(-75); // sheet catches at its max
+  });
+
+  it("applies independent main and jib trim commands", () => {
+    const sim = makeSim(12, 0);
+    sim.state.heading = 90 * DEG;
+
+    sim.step(DT, {
+      tiller: 0,
+      sheetTargetDeg: 25,
+      jibTargetDeg: 60,
+      auxOn: false,
+    });
+
+    // First-frame initialization uses the actual wind side instead of
+    // sweeping from an arbitrary, potentially backwinded boom position.
+    expect(Math.abs(sim.state.boomDeg.main)).toBeCloseTo(25, 6);
+    expect(Math.abs(sim.state.boomDeg.jib)).toBeCloseTo(60, 6);
+    expect(sim.state.boomDeg.main).toBeLessThan(0);
+    expect(sim.state.boomDeg.jib).toBeLessThan(0);
+    expect(sim.telemetry().sheetDeg).toBe(25);
+    expect(sim.telemetry().jibDeg).toBe(60);
+  });
+
+  it("uses the mainsheet as an outward stop, not a commanded boom angle", () => {
+    const main = harbor20.sails.find((sail) => sail.id === "main")!;
+    const awa = { speed: kn(12), angle: 45, vector: { x: 0, y: 0 } };
+
+    expect(sheetedBoomRestAngle(main, awa.angle, 70)).toBe(45);
+
+    let free = { angleDeg: 10, rateDeg: 0 };
+    for (let i = 0; i < 6 / DT; i++) {
+      free = stepSheetedBoom(main, awa, 70, free, DT);
+    }
+    // With slack left in a 70° sheet, wind aligns the boom near 45° rather
+    // than an invisible actuator forcing it all the way out to 70°.
+    expect(free.angleDeg).toBeCloseTo(45, 1);
+    expect(Math.abs(free.angleDeg)).toBeLessThan(70);
+
+    let caught = { angleDeg: 10, rateDeg: 0 };
+    for (let i = 0; i < 6 / DT; i++) {
+      caught = stepSheetedBoom(main, awa, 20, caught, DT);
+    }
+    expect(caught.angleDeg).toBe(20);
+    expect(caught.rateDeg).toBe(0);
+  });
+
+  it("wind-drives the jib club boom instead of actuating it across", () => {
+    const jib = harbor20.sails.find((sail) => sail.id === "jib")!;
+    const newTack = { speed: kn(12), angle: -45, vector: { x: 0, y: 0 } };
+    let boom = { angleDeg: 15, rateDeg: 0 };
+
+    const first = stepSheetedBoom(jib, newTack, 60, boom, DT);
+    expect(first.angleDeg).toBeGreaterThan(0); // no side-switch teleport
+    expect(first.rateDeg).toBeLessThan(0); // apparent wind starts the sweep
+    boom = first;
+
+    let rateAtCross: number | null = null;
+    for (let i = 0; i < 4 / DT; i++) {
+      const previousAngle = boom.angleDeg;
+      boom = stepSheetedBoom(jib, newTack, 60, boom, DT);
+      if (previousAngle > 0 && boom.angleDeg <= 0) {
+        rateAtCross = boom.rateDeg;
+        break;
+      }
+    }
+
+    expect(rateAtCross).not.toBeNull();
+    expect(rateAtCross!).toBeLessThan(-10);
+    expect(Math.abs(boom.angleDeg)).toBeLessThanOrEqual(60);
+  });
+
+  it("does not invent boom motion without wind or existing momentum", () => {
+    const main = harbor20.sails.find((sail) => sail.id === "main")!;
+    const calm = { speed: 0, angle: -60, vector: { x: 0, y: 0 } };
+    let boom = { angleDeg: 28, rateDeg: 0 };
+
+    for (let i = 0; i < 10 / DT; i++) {
+      boom = stepSheetedBoom(main, calm, 70, boom, DT);
+    }
+
+    expect(boom.angleDeg).toBe(28);
+    expect(boom.rateDeg).toBe(0);
+  });
+
+  it("carries finite angular momentum through a wind-side change", () => {
+    const main = harbor20.sails.find((sail) => sail.id === "main")!;
+    const newTack = { speed: kn(12), angle: -45, vector: { x: 0, y: 0 } };
+    let boom = { angleDeg: 15, rateDeg: 0 };
+
+    const first = stepSheetedBoom(main, newTack, 70, boom, DT);
+    expect(first.angleDeg).toBeGreaterThan(0); // no teleport across the boat
+    expect(first.rateDeg).toBeLessThan(0); // wind has started the sweep
+    boom = first;
+
+    let rateAtCross: number | null = null;
+    for (let i = 0; i < 4 / DT; i++) {
+      const previousAngle = boom.angleDeg;
+      boom = stepSheetedBoom(main, newTack, 70, boom, DT);
+      if (previousAngle > 0 && boom.angleDeg <= 0) {
+        rateAtCross = boom.rateDeg;
+        break;
+      }
+    }
+
+    expect(rateAtCross).not.toBeNull();
+    expect(rateAtCross!).toBeLessThan(-10);
+  });
+
+  it("turns rudder lift into both lateral force and yaw", () => {
+    const rudder = rudderForces(harbor20, 2, 10);
+
+    expect(rudder.side).toBeLessThan(0);
+    expect(rudder.yaw).toBeGreaterThan(0);
+    expect(rudder.yaw).toBeCloseTo(-rudder.side * harbor20.rudder.arm, 8);
+  });
+
   it("luffs below the luffing threshold", () => {
     const c = sailCoefficients(0);
     expect(c.cl).toBe(0);
@@ -128,6 +278,25 @@ describe("sail aerodynamics", () => {
 });
 
 describe("steady-state sailing (mini polar)", () => {
+  it("makes about four knots at the default close-hauled setup in 11 kn", () => {
+    const sim = makeConstantSim(11, 0);
+    sim.state.heading = harbor20.closeHauledTwa * DEG;
+    const main = harbor20.sails.find((sail) => sail.trim.kind === "sheet")!;
+    const jib = harbor20.sails.find((sail) => sail.trim.kind === "selfTacking")!;
+
+    for (let i = 0; i < 120 / DT; i++) {
+      sim.step(DT, {
+        tiller: headingHold(sim, harbor20.closeHauledTwa),
+        sheetTargetDeg: main.trim.initial,
+        jibTargetDeg: jib.trim.initial,
+        auxOn: false,
+      });
+    }
+
+    expect(sim.telemetry().sog).toBeGreaterThan(4);
+    expect(sim.telemetry().sog).toBeLessThan(4.8);
+  }, 30000);
+
   it("reaches ~4-5 kn close-hauled in 12 kn of wind", () => {
     const sog = polarPoint(12, 45);
     expect(sog).toBeGreaterThan(3.8);
@@ -152,6 +321,27 @@ describe("steady-state sailing (mini polar)", () => {
 });
 
 describe("dynamic behavior", () => {
+  it("carries light weather helm with useful windward rudder lift", () => {
+    const sim = makeConstantSim(12, 0);
+    sim.state.heading = 45 * DEG;
+
+    for (let i = 0; i < 120 / DT; i++) {
+      sim.step(DT, {
+        tiller: headingHold(sim, 45),
+        sheetTargetDeg: 15,
+        jibTargetDeg: 15,
+        auxOn: false,
+      });
+    }
+
+    const tillerDeg = headingHold(sim, 45) * harbor20.rudder.maxEffectiveAngle;
+    const rudder = rudderForces(harbor20, sim.state.u, sim.state.rudderDeg);
+    expect(tillerDeg).toBeLessThan(-0.5);
+    expect(tillerDeg).toBeGreaterThan(-3);
+    expect(rudder.side).toBeLessThan(0); // windward on this tack
+    expect(sim.telemetry().leeway).toBeLessThan(6);
+  }, 30000);
+
   it("port→starboard tack goes through the wind, never the lee", () => {
     const sim = makeSim(12, 30); // wind from 030
     sim.state.heading = 70 * DEG; // close-hauled PORT: TWA = -40, boom to stbd
@@ -163,17 +353,22 @@ describe("dynamic behavior", () => {
     let closestToLee = 180;
     let boomAtCross = 0;
     let crossed = false;
-    let crossStep = -1;
+    let reachedNewCourse = false;
     const steps = Math.round(12 / DT);
     for (let i = 0; i < steps; i++) {
-      sim.step(DT, { tiller: 0.7, sheetTargetDeg: 25, auxOn: false });
+      if (sim.state.heading / DEG <= -10) reachedNewCourse = true;
+      sim.step(DT, {
+        tiller: reachedNewCourse ? headingHold(sim, 350) : 0.7,
+        sheetTargetDeg: 15,
+        jibTargetDeg: 15,
+        auxOn: false,
+      });
       const tel = sim.telemetry();
       closestToWind = Math.min(closestToWind, Math.abs(wrapDeg(tel.headingDeg - 30)));
       closestToLee = Math.min(closestToLee, Math.abs(wrapDeg(tel.headingDeg - 210)));
       if (!crossed && Math.abs(tel.awa) < 20) {
         crossed = true;
         boomAtCross = sim.state.boomDeg.main;
-        crossStep = i;
       }
     }
     // the bow passed head-to-wind (the wind direction itself)…
@@ -183,10 +378,6 @@ describe("dynamic behavior", () => {
     // still the old boom side entering the no-go cone; flipped after the bow crossed
     // (physics boom sign follows the WIND side; the renderer mirrors to leeward)
     expect(boomAtCross).toBeLessThan(0);
-    const after = Math.round(1.5 / DT);
-    for (let i = crossStep; i < Math.min(crossStep + after, steps); i++) {
-      sim.step(DT, { tiller: 0, sheetTargetDeg: 25, auxOn: false });
-    }
     expect(sim.state.boomDeg.main).toBeGreaterThan(0);
     expect(Math.sign(sim.telemetry().awa)).toBe(1); // now the starboard tack
   }, 30000);
@@ -199,8 +390,16 @@ describe("dynamic behavior", () => {
 
     let closestToWind = 180;
     let closestToLee = 180;
+    let reachedNewCourse = false;
     for (let i = 0; i < 12 / DT; i++) {
-      sim.step(DT, { tiller: -0.7, sheetTargetDeg: 25, auxOn: false }); // tiller to port, toward the sail
+      if (sim.state.heading / DEG >= 430) reachedNewCourse = true;
+      sim.step(DT, {
+        // Tiller to port turns through the wind; center on the new course.
+        tiller: reachedNewCourse ? headingHold(sim, 70) : -0.7,
+        sheetTargetDeg: 15,
+        jibTargetDeg: 15,
+        auxOn: false,
+      });
       const tel = sim.telemetry();
       closestToWind = Math.min(closestToWind, Math.abs(wrapDeg(tel.headingDeg - 30)));
       closestToLee = Math.min(closestToLee, Math.abs(wrapDeg(tel.headingDeg - 210)));
@@ -220,7 +419,7 @@ describe("dynamic behavior", () => {
 
     let minAbsHeel = 180; // must pass near-flat through the wind
     for (let i = 0; i < 6 / DT; i++) {
-      sim.step(DT, { tiller: 0.7, sheetTargetDeg: 25, auxOn: false });
+      sim.step(DT, { tiller: 0.7, sheetTargetDeg: 15, jibTargetDeg: 15, auxOn: false });
       minAbsHeel = Math.min(minAbsHeel, Math.abs(sim.telemetry().heelDeg));
     }
     sailFor(sim, 45, 350); // settle on the starboard tack
@@ -236,7 +435,7 @@ describe("dynamic behavior", () => {
     expect(sim.telemetry().sog).toBeGreaterThan(3);
     // push the tiller to PORT (negative) to turn starboard through the wind to 045
     for (let i = 0; i < 10 / DT; i++) {
-      sim.step(DT, { tiller: -0.7, sheetTargetDeg: 10, auxOn: false });
+      sim.step(DT, { tiller: -0.7, sheetTargetDeg: 10, jibTargetDeg: 15, auxOn: false });
     }
     const hdg = ((sim.state.heading * 180) / Math.PI + 720) % 360;
     expect(hdg).toBeGreaterThan(20);
@@ -245,57 +444,100 @@ describe("dynamic behavior", () => {
   }, 30000);
 
   it("carries a 15° helm tack through the no-go zone in modest wind", () => {
-    const sim = makeSim(8, 0); // wind from N
-    sim.state.heading = 315 * DEG;
+    for (const scenario of [
+      { windKn: 6, maxSeconds: 14, minSog: 0.65 },
+      { windKn: 8, maxSeconds: 12, minSog: 0.8 },
+    ]) {
+      const sim = makeConstantSim(scenario.windKn, 0);
+      sim.state.heading = 315 * DEG;
 
-    // Reproduce the interactive default rather than idealizing the sheet trim.
-    for (let i = 0; i < 60 / DT; i++) {
-      sim.step(DT, { tiller: headingHold(sim, 315), sheetTargetDeg: 25, auxOn: false });
+      // Reproduce the interactive close-hauled defaults.
+      for (let i = 0; i < 60 / DT; i++) {
+        sim.step(DT, {
+          tiller: headingHold(sim, 315),
+          sheetTargetDeg: 15,
+          jibTargetDeg: 15,
+          auxOn: false,
+        });
+      }
+      expect(sim.telemetry().sog).toBeGreaterThan(2);
+
+      const tillerFor15Deg = -15 / harbor20.rudder.maxEffectiveAngle;
+      let minSog = Infinity;
+      let crossedAt: number | null = null;
+      for (let i = 0; i < scenario.maxSeconds / DT; i++) {
+        sim.step(DT, {
+          tiller: tillerFor15Deg,
+          sheetTargetDeg: 15,
+          jibTargetDeg: 15,
+          auxOn: false,
+        });
+        minSog = Math.min(minSog, sim.telemetry().sog);
+        // Wind is 000°, so 035° is the far edge of the ±35° no-go cone.
+        if (sim.state.heading / DEG >= 395) {
+          crossedAt = i * DT;
+          break;
+        }
+      }
+
+      expect(crossedAt).not.toBeNull();
+      expect(crossedAt!).toBeLessThan(scenario.maxSeconds);
+      expect(minSog).toBeGreaterThan(scenario.minSog);
     }
-    expect(sim.telemetry().sog).toBeGreaterThan(2);
-
-    const tillerFor15Deg = -15 / harbor20.rudder.maxEffectiveAngle;
-    let minSog = Infinity;
-    for (let i = 0; i < 20 / DT; i++) {
-      sim.step(DT, { tiller: tillerFor15Deg, sheetTargetDeg: 25, auxOn: false });
-      minSog = Math.min(minSog, sim.telemetry().sog);
-    }
-
-    // Wind is 000°, so 035° is the far edge of the documented ±35° no-go cone.
-    expect(sim.state.heading / DEG).toBeGreaterThan(395);
-    expect(minSog).toBeGreaterThan(0.5);
   }, 30000);
 
-  it("sweeps the boom across at a finite rate during a tack (no teleport)", () => {
+  it("wind-drives both booms across at finite rates during a tack", () => {
     const sim = makeSim(12, 0); // wind from N
     sim.state.heading = (315 * Math.PI) / 180; // close-hauled, starboard tack (AWA +45)
     sailFor(sim, 30, 315);
     const main = sim.state.boomDeg.main;
+    const jib = sim.state.boomDeg.jib;
     expect(main).toBeGreaterThan(0); // wind from stbd → + side
+    expect(jib).toBeGreaterThan(0);
 
-    // tack through the wind to port tack, tracking the boom
-    let maxStep = 0;
-    let prev = main;
-    let sawCrossing = false;
+    // Tack through the wind to port tack, tracking both physical booms.
+    let maxMainStep = 0;
+    let maxJibStep = 0;
+    let previousMain = main;
+    let previousJib = jib;
+    let mainRateAtCross: number | null = null;
+    let jibRateAtCross: number | null = null;
     for (let i = 0; i < 8 / DT; i++) {
-      sim.step(DT, { tiller: -0.7, sheetTargetDeg: 12, auxOn: false });
-      const cur = sim.state.boomDeg.main;
-      maxStep = Math.max(maxStep, Math.abs(cur - prev));
-      if (prev > 0 && cur < 0) sawCrossing = true;
-      prev = cur;
+      sim.step(DT, { tiller: -0.7, sheetTargetDeg: 12, jibTargetDeg: 15, auxOn: false });
+      const currentMain = sim.state.boomDeg.main;
+      const currentJib = sim.state.boomDeg.jib;
+      maxMainStep = Math.max(maxMainStep, Math.abs(currentMain - previousMain));
+      maxJibStep = Math.max(maxJibStep, Math.abs(currentJib - previousJib));
+      if (mainRateAtCross === null && previousMain > 0 && currentMain < 0) {
+        mainRateAtCross = sim.state.boomRateDeg.main;
+      }
+      if (jibRateAtCross === null && previousJib > 0 && currentJib < 0) {
+        jibRateAtCross = sim.state.boomRateDeg.jib;
+      }
+      previousMain = currentMain;
+      previousJib = currentJib;
     }
-    // finite sweep: never moves faster than the 130°/s rate (+ε for fp)
-    expect(maxStep).toBeLessThanOrEqual(130 * DT + 1e-9);
-    // boom crossed the centerline and settled on the new side
-    expect(sawCrossing).toBe(true);
+    const mainPolicy = harbor20.sails.find((sail) => sail.id === "main")!.trim;
+    const jibPolicy = harbor20.sails.find((sail) => sail.id === "jib")!.trim;
+    if (mainPolicy.kind !== "sheet") throw new Error("main must be sheeted");
+    if (jibPolicy.kind !== "selfTacking") throw new Error("jib must self-tend");
+    // Finite sweep bounded by the configured physical/numerical safety cap.
+    expect(maxMainStep).toBeLessThanOrEqual(mainPolicy.maxBoomRate * DT + 1e-9);
+    expect(maxJibStep).toBeLessThanOrEqual(jibPolicy.maxBoomRate * DT + 1e-9);
+    // Both booms cross with angular velocity, then their new-tack sheets catch them.
+    expect(mainRateAtCross).not.toBeNull();
+    expect(jibRateAtCross).not.toBeNull();
+    expect(mainRateAtCross!).toBeLessThan(0);
+    expect(jibRateAtCross!).toBeLessThan(0);
     expect(sim.state.boomDeg.main).toBeLessThan(0);
+    expect(sim.state.boomDeg.jib).toBeLessThan(0);
   }, 30000);
 
   it("has no steerage way when stopped", () => {
     const sim = makeSim(0.5, 0); // near-calm: sails slack, boat stays stopped
     const h0 = sim.state.heading;
     for (let i = 0; i < 5 / DT; i++) {
-      sim.step(DT, { tiller: 1, sheetTargetDeg: 60, auxOn: false });
+      sim.step(DT, { tiller: 1, sheetTargetDeg: 60, jibTargetDeg: 60, auxOn: false });
     }
     expect(Math.abs(sim.state.heading - h0)).toBeLessThan(0.05);
   }, 30000);
@@ -333,7 +575,7 @@ describe("grounding", () => {
     // sail due north straight at the wall
     simWater.spawn({ x: 0, y: 0 }, 0);
     for (let i = 0; i < 90 / DT; i++) {
-      simWater.step(DT, { tiller: 0, sheetTargetDeg: 45, auxOn: false });
+      simWater.step(DT, { tiller: 0, sheetTargetDeg: 45, jibTargetDeg: 45, auxOn: false });
     }
     const s = simWater.state;
     expect(Number.isFinite(s.pos.x + s.pos.y + s.heading + s.u + s.heel)).toBe(true);
@@ -348,7 +590,7 @@ describe("electric auxiliary", () => {
   const motorSpeedAfter = (dt: number, seconds = 180): number => {
     const sim = makeSim(0, 0);
     for (let i = 0; i < seconds / dt; i++) {
-      sim.step(dt, { tiller: 0, sheetTargetDeg: 85, auxOn: true });
+      sim.step(dt, { tiller: 0, sheetTargetDeg: 85, jibTargetDeg: 75, auxOn: true });
     }
     return toKn(sim.state.u);
   };
@@ -375,13 +617,14 @@ describe("electric auxiliary", () => {
   it("provides rudder steerage while maintaining powered way", () => {
     const sim = makeSim(0, 0);
     for (let i = 0; i < 30 / DT; i++) {
-      sim.step(DT, { tiller: 0, sheetTargetDeg: 85, auxOn: true });
+      sim.step(DT, { tiller: 0, sheetTargetDeg: 85, jibTargetDeg: 75, auxOn: true });
     }
     const initialHeading = sim.telemetry().headingDeg;
     for (let i = 0; i < 3 / DT; i++) {
       sim.step(DT, {
         tiller: -10 / harbor20.rudder.maxEffectiveAngle,
         sheetTargetDeg: 85,
+        jibTargetDeg: 75,
         auxOn: true,
       });
     }
@@ -440,7 +683,7 @@ describe("MOB marker drift", () => {
     const sim = new Sim(harbor20, env, null);
     const f = sim.dropFloat("mob");
     for (let i = 0; i < 60 / DT; i++) {
-      sim.step(DT, { tiller: 0, sheetTargetDeg: 60, auxOn: false });
+      sim.step(DT, { tiller: 0, sheetTargetDeg: 60, jibTargetDeg: 60, auxOn: false });
     }
     // 60 s: current pushes 18 m east; windage pushes ~2.5% of 6 m/s south ≈ 9 m
     expect(f.pos.x).toBeGreaterThan(17);

@@ -26,13 +26,22 @@ function runAngle(twsKn: number, twaDeg: number, seconds = 90) {
   sim.state.heading = (twaDeg * Math.PI) / 180;
 
   let sheet = 25;
+  let jib = 15;
   const tail = Math.floor(seconds * 0.2 / DT);
   const samples: { sog: number; heel: number; hdg: number }[] = [];
   const steps = Math.round(seconds / DT);
   for (let i = 0; i < steps; i++) {
     const tel = sim.telemetry();
-    if (i % 60 === 0) sheet = Math.abs(idealBoomAngle(tel.awa));
-    sim.step(DT, { tiller: headingHold(sim, twaDeg), sheetTargetDeg: sheet, auxOn: false });
+    if (i % 60 === 0) {
+      sheet = Math.abs(idealBoomAngle(tel.awa));
+      jib = Math.abs(tel.awa) / 2;
+    }
+    sim.step(DT, {
+      tiller: headingHold(sim, twaDeg),
+      sheetTargetDeg: sheet,
+      jibTargetDeg: jib,
+      auxOn: false,
+    });
     if (i >= steps - tail) {
       samples.push({ sog: tel.sog, heel: tel.heelDeg, hdg: tel.headingDeg });
     }
@@ -84,13 +93,17 @@ for (const tws of [6, 12]) {
   const sim = new Sim(harbor20, env, null);
   sim.state.heading = (-150 * Math.PI) / 180;
   let sheet = 60;
+  let jib = 60;
   const hold = (target: number) => headingHold(sim, target);
   const log: string[] = [];
   // equilibrate on the port broad reach
   for (let i = 0; i < 30 / DT; i++) {
     const tel = sim.telemetry();
-    if (i % 60 === 0) sheet = Math.abs(idealBoomAngle(tel.awa));
-    sim.step(DT, { tiller: hold(-150), sheetTargetDeg: sheet, auxOn: false });
+    if (i % 60 === 0) {
+      sheet = Math.abs(idealBoomAngle(tel.awa));
+      jib = Math.abs(tel.awa) / 2;
+    }
+    sim.step(DT, { tiller: hold(-150), sheetTargetDeg: sheet, jibTargetDeg: jib, auxOn: false });
   }
   console.log(`\n=== jibe: broad reach port (-150) -> starboard (+150), TWS ${tws} kn ===`);
   console.log("   t   hdg    u    heel  boomMain boomJib");
@@ -99,8 +112,11 @@ for (const tws of [6, 12]) {
     const t = sim.time - t0;
     const target = t < 10 ? -150 : 150; // at t=10 command the jibe
     const tel = sim.telemetry();
-    if (i % 60 === 0) sheet = Math.abs(idealBoomAngle(tel.awa));
-    sim.step(DT, { tiller: hold(target), sheetTargetDeg: sheet, auxOn: false });
+    if (i % 60 === 0) {
+      sheet = Math.abs(idealBoomAngle(tel.awa));
+      jib = Math.abs(tel.awa) / 2;
+    }
+    sim.step(DT, { tiller: hold(target), sheetTargetDeg: sheet, jibTargetDeg: jib, auxOn: false });
     if (i % Math.round(0.5 / DT) === 0) {
       log.push(
         `${t.toFixed(1).padStart(5)} ${tel.headingDeg.toFixed(0).padStart(5)}° ${sim.state.u.toFixed(2).padStart(6)}` +

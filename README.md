@@ -5,6 +5,12 @@ water** — Newport Harbor, Newport Beach CA first, extensible to any harbor.
 Sails a **W.D. Schock Harbor 20** with a self-tacking jib under **live wind
 from Open-Meteo**, with **man-overboard (MOB) drill scoring**.
 
+**Public beta:** this is an experimental simulator, not a navigation aid or a
+substitute for formal sailing instruction. Use official charts and sound
+seamanship on the water.
+
+Live demo: <https://bitnovus.github.io/newport-sailing-sim/>
+
 ```bash
 npm install
 npm run dev        # http://localhost:5173
@@ -17,7 +23,8 @@ npm run build      # typecheck + production build
 | Input | Action |
 | --- | --- |
 | `←/→` or `A/D` | tiller (realistic mode: push right = turn left, like a real boat) |
-| `W/S` | mainsheet in/out |
+| `S/W` | mainsheet in/out |
+| Jib trim slider | limits the self-tending jib club boom; wind swings it across |
 | `C` or `↓` | center the tiller |
 | `SPACE` / MOB button | drop MOB marker, start drill |
 | `E` | electric auxiliary drive |
@@ -33,8 +40,9 @@ for both the track and MOB drill.
 MOB recovery scoring arms after the boat first separates 15 m from the marker,
 preventing an immediate recovery while stopped at the drop point.
 The tiller slider at screen bottom holds any selected helm angle; CENTER
-returns it to 0°. Touch/hold sheet buttons remain available for mouse-only
-steering.
+returns it to 0°. The jib trim slider holds a separate jib-sheet limit while
+wind pressure self-tends the club boom. Touch/hold mainsheet buttons remain
+available for mouse-only steering.
 
 ## Architecture
 
@@ -63,16 +71,18 @@ scripts/
 - True wind from the provider is rendered *apparent* per instant: gusts are an
   Ornstein-Uhlenbeck process scaled by the reported gust excess.
 - Sails modeled with luffing (<6° angle of attack), attached flow to ~18°,
-  soft stall, and drag-plate behavior downwind. The self-tacking jib
-  auto-tracks half the apparent wind angle with an efficiency penalty at the
-  extremes (fixed traveler).
+  soft stall, and drag-plate behavior downwind. Both the main and the
+  self-tending jib's club boom swing under apparent-wind torque with their own
+  inertia and damping; their independent sheets set outward stops. The jib
+  retains a modest efficiency penalty at the sheeting extremes.
 - Hull drag has the classic wave-making knee at hull speed (5.6 kn for the
   H20); keel leeway needs flow (no steerage way / no leeway resistance when
   stopped); sway is solved semi-implicitly for numerical stability at 60 Hz.
 - The electric auxiliary uses a static-thrust cap plus a constant-power
   propeller curve, calibrated to about 5 kn in calm water with unloaded sails.
 - Realistic no-go zone (~35°), tacking angles (~45°), heel-to-leeward with
-  depower, weather helm that grows with heel.
+  depower, flow-dependent weather helm, and rudder lift that contributes both
+  turning moment and windward/leeward side-force.
 
 ### Adding a harbor
 
@@ -89,7 +99,7 @@ the water polygons with holes (islands), on a precomputed spatial grid.
 
 Copy `src/boats/harbor20.ts`, tune the numbers, register in
 `src/boats/registry.ts`. Sail trim policies are per-sail: `{kind: "sheet"}`
-(user-trimmed) or `{kind: "selfTacking"}`.
+(a user-set limit around a freely swinging boom) or `{kind: "selfTacking"}`.
 
 ### Wind data
 
@@ -120,3 +130,7 @@ physics changes needed.
 Wind: [Open-Meteo](https://open-meteo.com) (CC BY 4.0) · Imagery: Esri World
 Imagery · Basemap/nautical: © OpenStreetMap contributors, © OpenSeaMap
 contributors · Harbor geometry: © OpenStreetMap contributors (ODbL).
+
+Original application code is available under the [MIT License](LICENSE).
+Provider and data-license details are in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -12,7 +12,7 @@ sim.state.heading = (100 * Math.PI) / 180; // dead run
 console.log("tiller CENTERED, sheet 80 — does she stay on the run?");
 console.log("   t   hdg     u    awa  heel boomMain   sog");
 for (let i = 0; i < 120 / DT; i++) {
-  sim.step(DT, { tiller: 0, sheetTargetDeg: 80, auxOn: false });
+  sim.step(DT, { tiller: 0, sheetTargetDeg: 80, jibTargetDeg: 75, auxOn: false });
   if (i % (2 / DT) === 0) {
     const t = sim.telemetry();
     console.log(

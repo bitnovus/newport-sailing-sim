@@ -3,7 +3,12 @@ import { clamp, DEG, toDeg, toKn } from "./units";
 import { add, headingVec, len, starboardVec, v, type Vec2 } from "./vec";
 import { Environment } from "./environment";
 import { apparentWind, type ApparentWind, type TrueWind } from "./physics/wind";
-import { solveRig, selfTackingTrim, type SailSolution } from "./physics/sails";
+import {
+  sheetedBoomRestAngle,
+  solveRig,
+  stepSheetedBoom,
+  type SailSolution,
+} from "./physics/sails";
 import {
   auxiliaryThrust,
   hullDrag,
@@ -35,10 +40,14 @@ export interface BoatState {
   heelRate: number;
   /** Rudder deflection (deg, hydrodynamic: + = bow turns to starboard). */
   rudderDeg: number;
-  /** Mainsheet commanded boom angle (deg). */
+  /** Mainsheet outward boom-angle limit (deg). */
   sheetDeg: number;
+  /** Jib-sheet outward club-boom angle limit (deg). */
+  jibDeg: number;
   /** Actual (swept) boom angles per sail, deg, signed (+ = starboard-side physics convention). */
   boomDeg: Record<string, number>;
+  /** Actual angular velocity per sail, deg/s. Used by freely swinging booms. */
+  boomRateDeg: Record<string, number>;
   /** Electric auxiliary on/off. */
   auxOn: boolean;
   /** True while the hull is in contact with non-navigable shoreline. */
@@ -52,8 +61,10 @@ export interface SimInputs {
    * the sign for casual steering mode.
    */
   tiller: number;
-  /** Commanded mainsheet boom angle, deg from centerline. */
+  /** Mainsheet outward boom-angle limit, deg from centerline. */
   sheetTargetDeg: number;
+  /** Jib-sheet outward club-boom angle limit, deg from centerline. */
+  jibTargetDeg: number;
   auxOn: boolean;
 }
 
@@ -71,6 +82,7 @@ export interface Telemetry {
   heelDeg: number;
   rudderDeg: number;
   sheetDeg: number;
+  jibDeg: number;
   sails: SailSolution[];
 }
 
@@ -98,6 +110,10 @@ export class Sim {
     this.boat = boat;
     this.env = env;
     this.water = water;
+    const main = boat.sails.find((sail) => sail.trim.kind === "sheet");
+    const jib = boat.sails.find((sail) => sail.trim.kind === "selfTacking");
+    const initialSheetDeg = main?.trim.kind === "sheet" ? main.trim.initial : 15;
+    const initialJibDeg = jib?.trim.kind === "selfTacking" ? jib.trim.initial : 15;
     this.state = {
       pos: v(0, 0),
       heading: 0,
@@ -107,8 +123,12 @@ export class Sim {
       heel: 0,
       heelRate: 0,
       rudderDeg: 0,
-      sheetDeg: 25,
-      boomDeg: Object.fromEntries(boat.sails.map((sail) => [sail.id, 25])),
+      sheetDeg: initialSheetDeg,
+      jibDeg: initialJibDeg,
+      boomDeg: Object.fromEntries(
+        boat.sails.map((sail) => [sail.id, sail.trim.initial]),
+      ),
+      boomRateDeg: Object.fromEntries(boat.sails.map((sail) => [sail.id, 0])),
       auxOn: false,
       aground: false,
     };
@@ -123,6 +143,8 @@ export class Sim {
     this.lastWaterPos = pos;
     this.floats = [];
     this.time = 0;
+    for (const sail of this.boat.sails) this.state.boomRateDeg[sail.id] = 0;
+    this.boomsInitialized = false;
   }
 
   dropFloat(id: string, windage = 0.025): FloatingObject {
@@ -149,6 +171,7 @@ export class Sim {
   private trueWind: TrueWind = { speed: 0, directionFrom: 0 };
   private lastAw: ApparentWind = { speed: 0, angle: 0, vector: v(0, 0) };
   private lastSails: SailSolution[] = [];
+  private boomsInitialized = false;
 
   /** Advance one fixed physics step. dt should stay ≤ 1/30 s. */
   step(dt: number, inputs: SimInputs): void {
@@ -156,11 +179,12 @@ export class Sim {
     const b = this.boat;
     this.time += dt;
 
-    // ---- actuator dynamics: rudder + sheet move toward commands ----
+    // ---- actuator dynamics: rudder + sheets move toward commands ----
     const rudderTarget = -clamp(inputs.tiller, -1, 1) * b.rudder.maxEffectiveAngle;
     const rudderRate = b.rudder.rateLimit * dt;
     s.rudderDeg += clamp(rudderTarget - s.rudderDeg, -rudderRate, rudderRate);
     s.sheetDeg = clamp(inputs.sheetTargetDeg, 5, 85);
+    s.jibDeg = clamp(inputs.jibTargetDeg, 5, 85);
     s.auxOn = inputs.auxOn;
 
     // ---- wind + apparent wind (boat moves through the AIR = ground frame) ----
@@ -174,21 +198,41 @@ export class Sim {
     const aw = apparentWind(this.trueWind, s.heading, groundVel);
     this.lastAw = aw;
 
-    // ---- boom sweep: booms travel at a finite rate, so tacks and jibes show
-    // the sail sweeping across (and the force side transitions with it) ----
+    // ---- boom dynamics: both the main and the club-boomed self-tending jib
+    // swing under apparent-wind torque. Each sheet is only an outward stop. ----
     for (const sail of b.sails) {
-      const target =
-        sail.trim.kind === "sheet"
-          ? Math.sign(aw.angle) * clamp(Math.abs(s.sheetDeg), sail.trim.min, sail.trim.max)
-          : selfTackingTrim(sail, aw.angle);
-      // self-tackers snap across; the big main sweeps (jibe crash included)
-      const rate = (sail.trim.kind === "selfTacking" ? 220 : 130) * dt;
-      const cur = s.boomDeg[sail.id] ?? target;
-      s.boomDeg[sail.id] = cur + clamp(target - cur, -rate, rate);
+      const sheetLimit = sail.trim.kind === "sheet" ? s.sheetDeg : s.jibDeg;
+      const boundedLimit = clamp(sheetLimit, sail.trim.min, sail.trim.max);
+      const initial =
+        aw.speed > 0.15
+          ? sheetedBoomRestAngle(sail, aw.angle, sheetLimit)
+          : clamp(
+              s.boomDeg[sail.id] ?? sail.trim.initial,
+              -boundedLimit,
+              boundedLimit,
+            );
+      if (!this.boomsInitialized) {
+        s.boomDeg[sail.id] = initial;
+        s.boomRateDeg[sail.id] = 0;
+      } else {
+        const next = stepSheetedBoom(
+          sail,
+          aw,
+          sheetLimit,
+          {
+            angleDeg: s.boomDeg[sail.id] ?? initial,
+            rateDeg: s.boomRateDeg[sail.id] ?? 0,
+          },
+          dt,
+        );
+        s.boomDeg[sail.id] = next.angleDeg;
+        s.boomRateDeg[sail.id] = next.rateDeg;
+      }
     }
+    this.boomsInitialized = true;
 
     // ---- rig forces ----
-    const rig = solveRig(b, aw, s.sheetDeg, s.heel, s.boomDeg);
+    const rig = solveRig(b, aw, s.sheetDeg, s.jibDeg, s.heel, s.boomDeg);
     this.lastSails = rig.sails;
 
     // ---- hydro forces ----
@@ -197,8 +241,10 @@ export class Sim {
     const rudder = rudderForces(b, s.u, s.rudderDeg);
     const aux = s.auxOn ? auxiliaryThrust(b, s.u) : 0;
 
-    // weather helm grows with heel (heeled hull yaws to windward)
-    const heelYaw = -900 * Math.sin(s.heel) * (0.35 + s.u / 5);
+    // Weather helm from the heeled underwater body needs forward flow. Let it
+    // fade to zero without steerage so a boat starting from rest can build way
+    // instead of rounding into irons before the rudder becomes effective.
+    const heelYaw = -900 * Math.sin(s.heel) * (Math.max(0, s.u) / 3);
 
     // ---- surge: explicit (drag wall keeps u tame) ----
     const fx = rig.total.drive + aux + rudder.drag - drag + lwDrag;
@@ -207,10 +253,11 @@ export class Sim {
     // ---- sway: semi-implicit quadratic solve (explicit diverges at 60 Hz) ----
     // m·(v − v0)/dt = side − k·v − c·v·|v|, Newton from v0
     const { k, c } = lateralDamping(b, s.u);
-    let nv = s.v + ((rig.total.side / b.mass) * dt - s.u * s.r * dt) * 0.5;
+    const totalSide = rig.total.side + rudder.side;
+    let nv = s.v + ((totalSide / b.mass) * dt - s.u * s.r * dt) * 0.5;
     for (let i = 0; i < 4; i++) {
       const R = k * nv + c * nv * Math.abs(nv);
-      const F = (b.mass * (nv - s.v)) / dt - rig.total.side + R + b.mass * s.u * s.r;
+      const F = (b.mass * (nv - s.v)) / dt - totalSide + R + b.mass * s.u * s.r;
       const dR = k + 2 * c * Math.abs(nv);
       nv -= F / (b.mass / dt + dR);
     }
@@ -282,6 +329,7 @@ export class Sim {
       heelDeg: toDeg(s.heel),
       rudderDeg: s.rudderDeg,
       sheetDeg: s.sheetDeg,
+      jibDeg: s.jibDeg,
       sails: this.lastSails,
     };
   }

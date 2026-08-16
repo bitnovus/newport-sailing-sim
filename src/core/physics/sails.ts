@@ -88,20 +88,93 @@ export function idealBoomAngle(awaDeg: number): number {
 }
 
 /**
- * Self-tacking jib trim: the car slides across the traveler on its own as
- * the wind crosses the bow. It tracks roughly half the apparent wind angle
- * but can't be re-lead, so it gives away efficiency at the extremes.
+ * Resting angle of a freely hinged, sheeted boom. The unrestrained sail
+ * aligns with the apparent wind and luffs; a tighter sheet catches it at the
+ * selected maximum angle so wind pressure can load it and make useful force.
  */
-export function selfTackingTrim(sail: SailDefinition, awaDeg: number): number {
+export function sheetedBoomRestAngle(
+  sail: SailDefinition,
+  awaDeg: number,
+  sheetLimitDeg: number,
+): number {
   const policy = sail.trim;
-  if (policy.kind !== "selfTacking") return idealBoomAngle(awaDeg);
-  const mag = Math.sign(awaDeg) || 1;
-  const a = Math.abs(awaDeg);
-  const half = clamp(a / 2, policy.min, policy.max);
-  return mag * half;
+  const limit = clamp(Math.abs(sheetLimitDeg), policy.min, policy.max);
+  return clamp(awaDeg, -limit, limit);
 }
 
-/** Efficiency loss of a fixed-traveler jib near the extremes. */
+export interface BoomKinematics {
+  angleDeg: number;
+  rateDeg: number;
+}
+
+/**
+ * Advance a freely swinging sail boom. Apparent-wind pressure supplies torque
+ * about its pivot; inertia and damping make a tack/jibe a sweep rather than a
+ * commanded animation. Its sheet is a unilateral stop: it
+ * arrests outward motion but never forces the boom out to the selected angle.
+ */
+export function stepSheetedBoom(
+  sail: SailDefinition,
+  awa: ApparentWind,
+  sheetLimitDeg: number,
+  current: BoomKinematics,
+  dt: number,
+): BoomKinematics {
+  const policy = sail.trim;
+  if (dt <= 0) return current;
+
+  const limit = clamp(Math.abs(sheetLimitDeg), policy.min, policy.max);
+  let angleDeg = clamp(current.angleDeg, -limit, limit);
+  let rateRad = clamp(
+    current.rateDeg,
+    -policy.maxBoomRate,
+    policy.maxBoomRate,
+  ) * DEG;
+
+  // A sail can only present roughly a broadside normal force. Clamping the
+  // error also gives the right unambiguous crash direction when AWA wraps at
+  // the stern from +180° to −180° during a jibe.
+  const incidence = clamp(awa.angle - angleDeg, -90, 90) * DEG;
+  const pressureForce = 0.5 * AIR_DENSITY * awa.speed ** 2 * sail.area;
+  const aerodynamicTorque = pressureForce * policy.boomLever * Math.sin(incidence);
+  const accelerationRad =
+    aerodynamicTorque / policy.boomInertia - policy.boomDamping * rateRad;
+
+  rateRad = clamp(
+    rateRad + accelerationRad * dt,
+    -policy.maxBoomRate * DEG,
+    policy.maxBoomRate * DEG,
+  );
+  angleDeg += (rateRad / DEG) * dt;
+
+  // A taut sheet absorbs only outward velocity. Inward wind torque remains
+  // free to unload the line and swing the boom back through centerline.
+  if (angleDeg >= limit) {
+    angleDeg = limit;
+    if (rateRad > 0) rateRad = 0;
+  } else if (angleDeg <= -limit) {
+    angleDeg = -limit;
+    if (rateRad < 0) rateRad = 0;
+  }
+
+  return { angleDeg, rateDeg: rateRad / DEG };
+}
+
+/**
+ * Static equilibrium for the self-tacking jib when no kinematic boom state is
+ * supplied. Its sheet is a limit; the club boom may rest anywhere inside it.
+ */
+export function selfTackingTrim(
+  sail: SailDefinition,
+  awaDeg: number,
+  trimAngleDeg: number,
+): number {
+  const policy = sail.trim;
+  if (policy.kind !== "selfTacking") return idealBoomAngle(awaDeg);
+  return sheetedBoomRestAngle(sail, awaDeg, trimAngleDeg);
+}
+
+/** Efficiency loss from the jib's fixed sheeting geometry near the extremes. */
 export function selfTackingEfficiency(sail: SailDefinition, awaDeg: number): number {
   const policy = sail.trim;
   if (policy.kind !== "selfTacking") return 1;
@@ -191,15 +264,16 @@ export interface RigSolution {
 }
 
 /**
- * Sum forces over all sails, honoring each sail's trim policy. When
+ * Sum forces over all sails, honoring the independent main and jib trim. When
  * `actualBooms` is provided (per-sail signed angles), those are used instead
- * of policy targets — the sim sweeps booms at a finite rate so tacks and
- * jibes animate as a crossing rather than a teleport.
+ * of policy targets — the sim's sheeted boom is wind-driven and carries
+ * angular momentum through tacks and jibes.
  */
 export function solveRig(
   boat: BoatDefinition,
   awa: ApparentWind,
   sheetAngleDeg: number,
+  jibAngleDeg: number,
   heel: number,
   actualBooms?: Record<string, number>,
 ): RigSolution {
@@ -211,9 +285,9 @@ export function solveRig(
     if (actualBooms && sail.id in actualBooms) {
       boom = actualBooms[sail.id];
     } else if (sail.trim.kind === "sheet") {
-      boom = Math.sign(awa.angle) * clamp(Math.abs(sheetAngleDeg), sail.trim.min, sail.trim.max);
+      boom = sheetedBoomRestAngle(sail, awa.angle, sheetAngleDeg);
     } else {
-      boom = selfTackingTrim(sail, awa.angle);
+      boom = selfTackingTrim(sail, awa.angle, jibAngleDeg);
     }
     const sol = solveSail(sail, awa, boom, heel);
     sails.push(sol);

@@ -15,12 +15,17 @@ import type { BoatDefinition } from "./types";
 export const harbor20: BoatDefinition = {
   id: "harbor20",
   name: "Harbor 20",
+  // 40° pinches the simulator down to ~3.4 kn in 11 kn true; 45° matches the
+  // class's useful close-hauled groove with the default 15° sheet limits.
+  closeHauledTwa: 45,
   loa: 6.1,
   lwl: 5.23,
   beam: 2.13,
   draft: 1.07,
   mass: 884.5, // 1,950 lb class-ready boat with rigging/equipment; crew omitted
-  yawInertia: 1900,
+  // Slender-hull estimate is ~2,740 kg·m²; the keel and end structure carry
+  // enough mass fore/aft that the boat should retain turn momentum in a tack.
+  yawInertia: 2800,
   wettedArea: 13,
   hullSpeed: 2.86, // 5.6 kn
   dragC1: 27,
@@ -45,22 +50,43 @@ export const harbor20: BoatDefinition = {
       effortArm: -0.4, // behind midship → weather helm
       stallFloor: 0.55,
       blanketedAboveAwa: 181, // main is never blanketed
-      trim: { kind: "sheet", min: 5, max: 85 },
+      trim: {
+        kind: "sheet",
+        min: 5,
+        max: 85,
+        initial: 15,
+        // Boom, sailcloth, and air entrained by the sail. These give a brisk
+        // but finite tack and a noticeably harder high-wind jibe.
+        boomInertia: 80,
+        boomLever: 1.35,
+        boomDamping: 3.2,
+        maxBoomRate: 180,
+      },
     },
     {
       id: "jib",
       name: "Self-tacking jib",
       area: 7.15, // 77 ft² class sail plan
       effortHeight: 2.7,
-      effortArm: 1.7, // well forward
+      // Effective aerodynamic arm after jib/main interaction. The sail plan
+      // stays nearly neutral at rest; heel and forward flow add light weather
+      // helm once the hull has steerage.
+      effortArm: 0.9,
       stallFloor: 0.4,
       blanketedAboveAwa: 150,
       trim: {
         kind: "selfTacking",
         min: 8,
         max: 75,
-        // traveler cars can't re-lead the sheet: modest loss when very
-        // close-hauled or running wide
+        initial: 15,
+        // The club boom is smaller and lighter than the main boom, so it
+        // self-tends a little faster while retaining a finite crossing sweep.
+        boomInertia: 18,
+        boomLever: 0.85,
+        boomDamping: 4,
+        maxBoomRate: 220,
+        // The fixed club-boom sheeting geometry gives up modest efficiency
+        // when very close-hauled or running wide.
         efficiency: 0.85,
       },
     },

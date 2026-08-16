@@ -1,15 +1,15 @@
 import "./style.css";
 import maplibregl from "maplibre-gl";
 import { Sim } from "./core/sim";
-import { Environment } from "./core/environment";
+import { Environment, type WindSample } from "./core/environment";
 import { getBoat } from "./boats/registry";
 import { loadWater } from "./harbors/registry";
-import { createMap, setBaseStyle, CameraRig, type BaseStyle } from "./render/map";
+import { createMap, setBaseStyle, CameraRig, OSM_ATTR, type BaseStyle } from "./render/map";
 import { SceneLayer } from "./render/scene";
 import { Controls } from "./ui/controls";
 import { Hud, MobDrill } from "./ui/hud";
 import { ManualWind, OpenMeteoWind } from "./providers/open-meteo";
-import { toDeg, wrapDeg, DEG } from "./core/units";
+import { DEG, kn } from "./core/units";
 
 const HARBOR_ID = "newport-harbor";
 const BOAT_ID = "harbor20";
@@ -28,7 +28,8 @@ const env = new Environment(manual.current());
 env.current = { x: def.current.x, y: def.current.y };
 
 /** Close-hauled heading on port tack for the wind the provider is reporting. */
-const sailableHeading = (twdDeg: number): number => (twdDeg + 40 + 360) % 360;
+const sailableHeading = (twdDeg: number): number =>
+  (twdDeg + boat.closeHauledTwa + 360) % 360;
 
 const sim = new Sim(boat, env, water);
 const startPos = water.plane.project(def.start.lng, def.start.lat);
@@ -38,21 +39,25 @@ sim.spawn(startPos, (sailableHeading(manual.current().directionFrom) * Math.PI) 
 
 let userActed = false; // any tiller/sheet input stops the spawn auto-orient
 let autoOriented = false;
-const reorientOnce = () => {
-  if (autoOriented || userActed || sim.state.u > 0.3 || sim.time < 4) return;
-  const tel = sim.telemetry();
-  const twa = wrapDeg(tel.twd - toDeg(sim.state.heading));
-  if (Math.abs(twa) < 35 && tel.tws > 2) {
-    // parked in the no-go zone (spawn wind changed under us) — swing to a
-    // sailable course so the boat is actually under way
-    sim.state.heading = sailableHeading(tel.twd) * DEG;
-    autoOriented = true;
-  }
+const reorientOnce = (sample: WindSample) => {
+  if (autoOriented || userActed || sim.time < 4) return;
+  // Wait for the live request rather than locking in its manual fallback.
+  // Manual mode already owns its selected wind and can orient immediately.
+  if (usingLive && sample.source !== live.name) return;
+  if (sample.speed <= kn(2)) return;
+
+  // The initial heading was computed from fallback wind. Once the selected
+  // provider is ready, put an untouched boat in the actual close-hauled
+  // groove even if it already gathered enough way to trip the old speed guard.
+  sim.state.heading = sailableHeading(sample.directionFrom) * DEG;
+  sim.state.r = 0;
+  autoOriented = true;
 };
 
 setInterval(() => {
-  env.updateWind((usingLive ? live : manual).current());
-  reorientOnce();
+  const selectedWind = (usingLive ? live : manual).current();
+  env.updateWind(selectedWind);
+  reorientOnce(selectedWind);
 }, 1000);
 
 // ---- map + 3D ----
@@ -62,7 +67,11 @@ const scene = new SceneLayer({ lat: def.lat0, lng: def.lon0 }, sim);
 map.on("load", () => {
   setBaseStyle(map, baseStyle);
   // debug water outline (subtle) — shows the collision geometry
-  map.addSource("water-outline", { type: "geojson", data: water.waterSource() as never });
+  map.addSource("water-outline", {
+    type: "geojson",
+    data: water.waterSource() as never,
+    attribution: OSM_ATTR,
+  });
   map.addLayer({
     id: "water-outline",
     type: "line",
@@ -128,7 +137,22 @@ setInterval(() => {
 }, 250);
 
 // ---- UI ----
-const controls = new Controls(boat.rudder.maxEffectiveAngle);
+const selfTackingSail = boat.sails.find((sail) => sail.trim.kind === "selfTacking");
+const sheetedSail = boat.sails.find((sail) => sail.trim.kind === "sheet");
+const jibTrim =
+  selfTackingSail?.trim.kind === "selfTacking"
+    ? {
+        min: selfTackingSail.trim.min,
+        max: selfTackingSail.trim.max,
+        initial: selfTackingSail.trim.initial,
+      }
+    : undefined;
+const controls = new Controls(boat.rudder.maxEffectiveAngle, jibTrim);
+if (sheetedSail?.trim.kind === "sheet") {
+  controls.state.sheetTargetDeg = sheetedSail.trim.initial;
+}
+const untouchedMainTrim = controls.state.sheetTargetDeg;
+const untouchedJibTrim = controls.state.jibTargetDeg;
 controls.bindHoldButtons(document.getElementById("touch-controls")!);
 const hud = new Hud();
 const drill = new MobDrill();
@@ -273,9 +297,20 @@ function frame(now: number): void {
   acc += dt;
 
   const input = controls.update(dt);
-  if (Math.abs(input.tiller) > 0.08) userActed = true;
+  if (
+    Math.abs(input.tiller) > 0.08 ||
+    Math.abs(input.sheetTargetDeg - untouchedMainTrim) > 0.1 ||
+    Math.abs(input.jibTargetDeg - untouchedJibTrim) > 0.1
+  ) {
+    userActed = true;
+  }
   while (acc >= DT) {
-    sim.step(DT, { tiller: input.tiller, sheetTargetDeg: input.sheetTargetDeg, auxOn: input.auxOn });
+    sim.step(DT, {
+      tiller: input.tiller,
+      sheetTargetDeg: input.sheetTargetDeg,
+      jibTargetDeg: input.jibTargetDeg,
+      auxOn: input.auxOn,
+    });
     acc -= DT;
   }
 

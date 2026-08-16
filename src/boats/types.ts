@@ -4,12 +4,31 @@
  * (converted to radians where the physics needs it).
  */
 
-/** How a sail's trim angle (boom angle off centerline) is determined. */
+/** Shared sheet limits and hinge dynamics for a wind-driven sail boom. */
+export interface WindDrivenBoomTrim {
+  min: number;
+  max: number;
+  initial: number;
+  /** Boom + attached-sail rotational inertia about its pivot, kg·m². */
+  boomInertia: number;
+  /** Effective pivot-to-center-of-pressure distance, m. */
+  boomLever: number;
+  /** Pivot/aerodynamic angular damping rate, s⁻¹. */
+  boomDamping: number;
+  /** Numerical/physical cap on relative boom speed, deg/s. */
+  maxBoomRate: number;
+}
+
+/** How a sail's sheet and boom-angle limit are exposed to the crew. */
 export type TrimPolicy =
-  /** User-trimmed via sheet control (mainsail on a Harbor 20). */
-  | { kind: "sheet"; min: number; max: number }
-  /** Self-tacking: boom auto-tracks ~half the apparent wind angle (H20 jib). */
-  | { kind: "selfTacking"; min: number; max: number; efficiency: number };
+  /**
+   * User-trimmed via sheet control (mainsail on a Harbor 20). The selected
+   * angle is the sheet's outward stop; apparent-wind pressure moves the boom
+   * freely inside it.
+   */
+  | (WindDrivenBoomTrim & { kind: "sheet" })
+  /** Club-boomed jib: separately sheeted and self-tending under wind pressure. */
+  | (WindDrivenBoomTrim & { kind: "selfTacking"; efficiency: number });
 
 export interface SailDefinition {
   id: string;
@@ -30,6 +49,8 @@ export interface SailDefinition {
 export interface BoatDefinition {
   id: string;
   name: string;
+  /** Default close-hauled true-wind angle used when spawning under sail, deg. */
+  closeHauledTwa: number;
   loa: number;
   lwl: number;
   beam: number;
