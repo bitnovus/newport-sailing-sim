@@ -122,16 +122,19 @@ export class SceneLayer implements CustomLayerInterface {
     const main = telemetry.sails.find((sl) => sl.sailId === "main");
     const jib = telemetry.sails.find((sl) => sl.sailId === "jib");
     // sails fill to LEEWARD (opposite the apparent wind); boom sign in the
-    // physics is windward-convention, so flip for rendering
-    const side = telemetry.awa >= 0 ? 1 : -1; // +1 = port bulge when wind from stbd
+    // physics is windward-convention, so flip for rendering. Sail-surface
+    // +1 bulges to local +Y = starboard, so wind from port (awa < 0) → +1.
+    const side = telemetry.awa >= 0 ? -1 : 1;
     const pressure = Math.min(1, (telemetry.aws / 14) ** 2);
     const camber = 0.09 + 0.06 * pressure;
     if (main) {
-      this.boat.mainSail.rotation.z = (-main.boomAngle * Math.PI) / 180;
+      // physics boom sign is windward-convention: + renders local +Y =
+      // starboard, so +boomAngle puts the boom/belly to LEEWARD
+      this.boat.mainSail.rotation.z = (main.boomAngle * Math.PI) / 180;
       this.boat.mainSailSurface.update(camber, side, main.flow, t);
     }
     if (jib) {
-      this.boat.jibSail.rotation.z = (-jib.boomAngle * Math.PI) / 180;
+      this.boat.jibSail.rotation.z = (jib.boomAngle * Math.PI) / 180;
       this.boat.jibSailSurface.update(camber, side, jib.flow, t);
     }
     this.boat.rudder.rotation.z = (-s.rudderDeg * Math.PI) / 180;

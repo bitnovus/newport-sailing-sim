@@ -24,7 +24,7 @@ export interface SailSurface {
   mesh: THREE.Mesh;
   /**
    * @param camberFrac draft as a fraction of local chord (0..0.2)
-   * @param side +1 bulge to port, −1 to starboard (leeward side)
+   * @param side +1 bulge to starboard (+Y), −1 to port — caller passes leeward
    * @param flow 0..1 attached-flow fraction (0 = fully luffing)
    * @param time seconds, drives the flutter phase
    */
