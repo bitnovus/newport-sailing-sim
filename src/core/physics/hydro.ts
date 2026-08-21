@@ -3,13 +3,22 @@ import { clamp, DEG } from "../units";
 
 export const WATER_DENSITY = 1025; // kg/m³, seawater
 
-/** Total hydrodynamic drag opposing forward motion, N. */
+/**
+ * Signed hydrodynamic resistance opposing surge, N. Positive values resist
+ * forward motion and negative values resist sternway. Modeling both
+ * directions prevents a luffing boat in irons from accelerating astern until
+ * it reaches the simulator's numerical velocity bound.
+ */
 export function hullDrag(boat: BoatDefinition, u: number): number {
-  if (u <= 0) return 0;
-  const visc = boat.dragC1 * u * u;
-  const x = u / boat.hullSpeed;
-  const wave = u * u * (boat.dragC2 + boat.dragC3 * x ** 6);
-  return visc + wave;
+  if (u === 0) return 0;
+  const speed = Math.abs(u);
+  const visc = boat.dragC1 * speed * speed;
+  const x = speed / boat.hullSpeed;
+  const wave = speed * speed * (boat.dragC2 + boat.dragC3 * x ** 6);
+  // A transom-stern displacement hull presents far more bluff underwater
+  // area when moving astern than when its bow is parting the water ahead.
+  const reverseResistance = u < 0 ? 12.5 : 1;
+  return Math.sign(u) * (visc + wave) * reverseResistance;
 }
 
 /**

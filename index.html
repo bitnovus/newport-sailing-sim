@@ -28,9 +28,10 @@
         <li><b>Tiller slider</b> holds the selected helm angle · <b>CENTER</b> returns it to 0°</li>
         <li><b>S/W</b> mainsheet in/out &nbsp;·&nbsp; <b>C</b> center tiller</li>
         <li><b>Jib trim slider</b> limits the self-tending club boom; wind swings it across automatically</li>
+        <li><b>G / JIB WING</b> throws a winking jib to weather for wing-and-wing on a deep run</li>
         <li><b>SPACE</b> drop MOB marker &nbsp;·&nbsp; <b>E</b> electric drive</li>
         <li><b>CLEAR</b> remove the track and reset/remove the MOB marker</li>
-        <li><b>V</b> chase/chartplotter &nbsp;·&nbsp; <b>M</b> satellite/chart</li>
+        <li><b>V</b> chase/chartplotter &nbsp;·&nbsp; <b>M</b> configured imagery/chart</li>
         <li><b>Wheel / + / −</b> zoom (works in both views)</li>
         <li>Keep the boat out of the no-go zone (~35° off the wind) — watch the windex.</li>
       </ul>
@@ -44,8 +45,9 @@
           Data and services:
           <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>
           · <a href="https://www.openseamap.org/" target="_blank" rel="noreferrer">OpenSeaMap</a>
-          · <a href="https://www.esri.com/" target="_blank" rel="noreferrer">Esri</a>
-          · <a href="https://open-meteo.com/en/terms" target="_blank" rel="noreferrer">Open-Meteo</a>
+          · <a href="https://open-meteo.com/en/terms" target="_blank" rel="noreferrer">Open-Meteo (when enabled)</a>
+          · optional imagery providers configured by the site operator
+          · <a href="./THIRD_PARTY_LICENSES.txt" target="_blank" rel="noreferrer">software licenses</a>
         </p>
       </div>
     </div>
@@ -106,6 +108,7 @@
       <button id="btn-aux" class="tool">E-DRIVE</button>
       <button id="btn-view" class="tool">VIEW</button>
       <button id="btn-map" class="tool">MAP</button>
+      <button id="btn-wing" class="tool" aria-pressed="false">JIB WING</button>
       <button id="btn-wind" class="tool">WIND</button>
       <button id="btn-help" class="tool">HELP / INFO</button>
     </div>

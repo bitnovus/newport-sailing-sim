@@ -17,12 +17,11 @@ export interface WindProvider {
 /* ------------------------------------------------------------------ */
 /* AIS — future integration seam.                                      */
 /*                                                                     */
-/* The sim renders anything implementing AisProvider. The intended      */
-/* first implementation is aisstream.io (free WebSocket API, key via    */
-/* signup at https://aisstream.io): subscribe to PositionReports for    */
-/* the harbor bbox, decode MetaData + PositionReport fields into the   */
-/* Vessel shape below, and dead-reckon between updates with            */
-/* extrapolateVessel(). No UI work is needed beyond a vessel layer.     */
+/* The sim can render anything implementing AisProvider. A future       */
+/* implementation must keep credentials outside the browser bundle,    */
+/* document provider terms and vessel-data privacy, map reports into    */
+/* the Vessel shape below, and dead-reckon between updates with         */
+/* extrapolateVessel().                                                 */
 /* ------------------------------------------------------------------ */
 
 export interface Vessel {

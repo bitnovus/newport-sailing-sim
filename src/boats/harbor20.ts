@@ -2,8 +2,9 @@ import type { BoatDefinition } from "./types";
 
 /**
  * W.D. Schock Harbor 20 — the Newport Harbor one-design.
- * Hull dimensions from W.D. Schock; class-ready weight and sail areas from
- * the Harbor 20 Class Association rules and design drawings: LOA 6.10 m,
+ * Hull dimensions from W.D. Schock's published specifications; class-ready
+ * weight and sail areas from the Harbor 20 Class Association rules and design
+ * drawings (source links in README.md): LOA 6.10 m,
  * LWL 5.23 m, beam 2.13 m, draft 1.07 m, minimum boat weight 884.5 kg
  * (900 lb ballast), main 14.21 m², jib 7.15 m², hull speed ≈ 5.6 kn.
  * Fractional rig with a small high-clew self-tacking jib; electric auxiliary.
@@ -30,7 +31,7 @@ export const harbor20: BoatDefinition = {
   hullSpeed: 2.86, // 5.6 kn
   dragC1: 27,
   dragC2: 13,
-  dragC3: 33,
+  dragC3: 77,
   lateralResistance: 1600,
   maxEffectiveLeeway: 10,
   hullLateralDrag: 3600,
@@ -93,6 +94,6 @@ export const harbor20: BoatDefinition = {
   ],
   // Effective full-throttle propulsion calibrated to W.D. Schock's published
   // "about five knots" in calm water with the sails unloaded.
-  auxiliaryThrust: 400,
-  auxiliaryPower: 980,
+  auxiliaryThrust: 550,
+  auxiliaryPower: 1400,
 };

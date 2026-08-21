@@ -13,7 +13,7 @@ interface OpenMeteoResponse {
 }
 
 /**
- * Real wind from Open-Meteo (free, keyless, CORS-open — verified).
+ * Current forecast wind from an operator-configured Open-Meteo endpoint.
  * Polls every 10 min; between polls the Environment keeps gusting locally.
  * Fails soft: keeps the last sample forever; falls back to the manual
  * provider's last value if we've never fetched.
@@ -30,6 +30,7 @@ export class OpenMeteoWind implements WindProvider {
     private readonly lat: number,
     private readonly lon: number,
     fallback: WindSample,
+    private readonly baseUrl = "https://api.open-meteo.com",
   ) {
     this.sample = fallback;
   }
@@ -48,10 +49,15 @@ export class OpenMeteoWind implements WindProvider {
   }
 
   private async poll(): Promise<void> {
-    const url =
-      `https://api.open-meteo.com/v1/forecast?latitude=${this.lat}&longitude=${this.lon}` +
-      `&current=wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=ms`;
     try {
+      const url = new URL("v1/forecast", `${this.baseUrl.replace(/\/$/, "")}/`);
+      url.searchParams.set("latitude", String(this.lat));
+      url.searchParams.set("longitude", String(this.lon));
+      url.searchParams.set(
+        "current",
+        "wind_speed_10m,wind_direction_10m,wind_gusts_10m",
+      );
+      url.searchParams.set("wind_speed_unit", "ms");
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = (await res.json()) as OpenMeteoResponse;

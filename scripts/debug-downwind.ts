@@ -34,7 +34,7 @@ function runAngle(twsKn: number, twaDeg: number, seconds = 90) {
     const tel = sim.telemetry();
     if (i % 60 === 0) {
       sheet = Math.abs(idealBoomAngle(tel.awa));
-      jib = Math.abs(tel.awa) / 2;
+      jib = Math.abs(idealBoomAngle(tel.awa));
     }
     sim.step(DT, {
       tiller: headingHold(sim, twaDeg),
@@ -101,7 +101,7 @@ for (const tws of [6, 12]) {
     const tel = sim.telemetry();
     if (i % 60 === 0) {
       sheet = Math.abs(idealBoomAngle(tel.awa));
-      jib = Math.abs(tel.awa) / 2;
+      jib = Math.abs(idealBoomAngle(tel.awa));
     }
     sim.step(DT, { tiller: hold(-150), sheetTargetDeg: sheet, jibTargetDeg: jib, auxOn: false });
   }
@@ -114,7 +114,7 @@ for (const tws of [6, 12]) {
     const tel = sim.telemetry();
     if (i % 60 === 0) {
       sheet = Math.abs(idealBoomAngle(tel.awa));
-      jib = Math.abs(tel.awa) / 2;
+      jib = Math.abs(idealBoomAngle(tel.awa));
     }
     sim.step(DT, { tiller: hold(target), sheetTargetDeg: sheet, jibTargetDeg: jib, auxOn: false });
     if (i % Math.round(0.5 / DT) === 0) {

@@ -1,6 +1,6 @@
 import "./style.css";
 import maplibregl from "maplibre-gl";
-import { Sim } from "./core/sim";
+import { JIB_WING_MIN_AWA_DEG, Sim } from "./core/sim";
 import { Environment, type WindSample } from "./core/environment";
 import { getBoat } from "./boats/registry";
 import { loadWater } from "./harbors/registry";
@@ -10,6 +10,7 @@ import { Controls } from "./ui/controls";
 import { Hud, MobDrill } from "./ui/hud";
 import { ManualWind, OpenMeteoWind } from "./providers/open-meteo";
 import { DEG, kn } from "./core/units";
+import { appConfig } from "./config";
 
 const HARBOR_ID = "newport-harbor";
 const BOAT_ID = "harbor20";
@@ -20,9 +21,14 @@ const boat = getBoat(BOAT_ID);
 
 // ---- wind: live Open-Meteo with a manual fallback/override ----
 const manual = new ManualWind({ speed: 5.14, directionFrom: 250, gust: 5.9, source: "manual" });
-const live = new OpenMeteoWind(def.lat0, def.lon0, manual.current());
-let usingLive = true;
-live.start();
+const live = new OpenMeteoWind(
+  def.lat0,
+  def.lon0,
+  manual.current(),
+  appConfig.openMeteoBaseUrl,
+);
+let usingLive = appConfig.liveWindEnabled;
+if (appConfig.liveWindEnabled) live.start();
 
 const env = new Environment(manual.current());
 env.current = { x: def.current.x, y: def.current.y };
@@ -65,7 +71,7 @@ const map = createMap(document.getElementById("map")!, { lng: def.start.lng, lat
 const rig = new CameraRig(map);
 const scene = new SceneLayer({ lat: def.lat0, lng: def.lon0 }, sim);
 map.on("load", () => {
-  setBaseStyle(map, baseStyle);
+  setBaseStyle(map, baseStyle, appConfig.mapTiles);
   // debug water outline (subtle) — shows the collision geometry
   map.addSource("water-outline", {
     type: "geojson",
@@ -99,7 +105,7 @@ map.on("load", () => {
 // ---- boat track line ----
 // History is kept in localStorage so a page refresh (or an HMR reload) doesn't
 // silently wipe the track — otherwise every reload looks like "a straight line".
-const TRACK_KEY = "glmbuild.track";
+const TRACK_KEY = "newport-sailing-sim.track.v1";
 let track: [number, number][] = [];
 try {
   const saved: unknown = JSON.parse(localStorage.getItem(TRACK_KEY) ?? "[]");
@@ -157,12 +163,13 @@ controls.bindHoldButtons(document.getElementById("touch-controls")!);
 const hud = new Hud();
 const drill = new MobDrill();
 
-let baseStyle: BaseStyle = "satellite";
+let baseStyle: BaseStyle = appConfig.mapTiles.satellite ? "satellite" : "chart";
 const buttons: Record<string, HTMLButtonElement> = {};
-for (const id of ["mob", "aux", "view", "map", "wind", "help", "zoomin", "zoomout", "clear"]) {
+for (const id of ["mob", "aux", "view", "map", "wing", "wind", "help", "zoomin", "zoomout", "clear"]) {
   const b = document.getElementById(`btn-${id}`) as HTMLButtonElement;
   if (b) buttons[id] = b;
 }
+if (!appConfig.mapTiles.satellite) buttons.map?.classList.add("hidden");
 buttons.zoomin?.addEventListener("click", () => {
   hud.flash(`Zoom ${rig.nudgeZoom(0.6).toFixed(1)}`, 700);
 });
@@ -208,8 +215,12 @@ buttons.view?.addEventListener("click", () => {
   hud.flash(rig.mode === "chase" ? "Chase view" : "Chartplotter view");
 });
 buttons.map?.addEventListener("click", () => {
+  if (!appConfig.mapTiles.satellite) {
+    hud.flash("No imagery provider configured");
+    return;
+  }
   baseStyle = baseStyle === "satellite" ? "chart" : "satellite";
-  setBaseStyle(map, baseStyle);
+  setBaseStyle(map, baseStyle, appConfig.mapTiles);
   // overlays must sit above the freshly added base layers
   for (const id of ["water-outline", "boat-track-line"]) {
     if (map.getLayer(id)) map.moveLayer(id);
@@ -217,7 +228,29 @@ buttons.map?.addEventListener("click", () => {
   if (map.getLayer(scene.id)) map.moveLayer(scene.id);
   hud.flash(baseStyle === "satellite" ? "Satellite imagery" : "Chart style");
 });
+const syncWingButton = () => {
+  const active = controls.state.jibWinged;
+  buttons.wing?.classList.toggle("active", active);
+  buttons.wing?.setAttribute("aria-pressed", String(active));
+};
+buttons.wing?.addEventListener("click", () => {
+  const enabling = !controls.state.jibWinged;
+  if (enabling && Math.abs(sim.telemetry().awa) < JIB_WING_MIN_AWA_DEG) {
+    hud.flash(`Bear away past ${JIB_WING_MIN_AWA_DEG}° AWA until the jib winks`);
+    return;
+  }
+  controls.state.jibWinged = enabling;
+  syncWingButton();
+  hud.flash(enabling ? "Throwing jib to weather…" : "Jib winger released");
+});
+syncWingButton();
 buttons.wind?.addEventListener("click", () => {
+  if (!appConfig.liveWindEnabled) {
+    usingLive = false;
+    env.updateWind(manual.current());
+    hud.flash("Manual wind · live provider disabled");
+    return;
+  }
   usingLive = !usingLive;
   env.updateWind((usingLive ? live : manual).current());
   hud.flash(usingLive ? "Live wind (Open-Meteo)" : "Manual wind");
@@ -262,6 +295,7 @@ window.addEventListener("keydown", (e) => {
   if (k === "e") buttons.aux?.click();
   if (k === "v") buttons.view?.click();
   if (k === "m") buttons.map?.click();
+  if (k === "g") buttons.wing?.click();
   if (k === "+" || k === "=") hud.flash(`Zoom ${rig.nudgeZoom(0.6).toFixed(1)}`, 700);
   if (k === "-" || k === "_") hud.flash(`Zoom ${rig.nudgeZoom(-0.6).toFixed(1)}`, 700);
 });
@@ -290,6 +324,7 @@ mobMarker.getElement().style.display = "none";
 let last = performance.now();
 let acc = 0;
 let lastAgroundFlash = 0;
+let jibWasWinking = false;
 
 function frame(now: number): void {
   const dt = Math.min(0.25, (now - last) / 1000);
@@ -300,7 +335,8 @@ function frame(now: number): void {
   if (
     Math.abs(input.tiller) > 0.08 ||
     Math.abs(input.sheetTargetDeg - untouchedMainTrim) > 0.1 ||
-    Math.abs(input.jibTargetDeg - untouchedJibTrim) > 0.1
+    Math.abs(input.jibTargetDeg - untouchedJibTrim) > 0.1 ||
+    input.jibWinged
   ) {
     userActed = true;
   }
@@ -309,12 +345,23 @@ function frame(now: number): void {
       tiller: input.tiller,
       sheetTargetDeg: input.sheetTargetDeg,
       jibTargetDeg: input.jibTargetDeg,
+      jibWinged: input.jibWinged,
       auxOn: input.auxOn,
     });
     acc -= DT;
   }
 
   const tel = sim.telemetry();
+  if (controls.state.jibWinged && !tel.jibWinged) {
+    controls.state.jibWinged = false;
+    syncWingButton();
+    hud.flash("Jib winger released as the boat headed up");
+  }
+  const jibSail = tel.sails.find((sail) => sail.sailId === "jib");
+  if (jibSail?.winking && !jibWasWinking && !tel.jibWinged) {
+    hud.flash("Jib winking · press G / JIB WING or head up", 1800);
+  }
+  jibWasWinking = Boolean(jibSail?.winking);
   const [lng, lat] = water.plane.unproject(sim.state.pos);
 
   // MOB drill
@@ -345,7 +392,12 @@ function frame(now: number): void {
 
   scene.update(tel);
   rig.update(lng, lat, ((sim.state.heading * 180) / Math.PI) % 360, dt);
-  hud.update(tel, usingLive ? live.status : manual.status, controls.state.tiller);
+  hud.update(
+    tel,
+    usingLive ? live.status : manual.status,
+    controls.state.tiller,
+    usingLive,
+  );
   map.triggerRepaint();
   requestAnimationFrame(frame);
 }

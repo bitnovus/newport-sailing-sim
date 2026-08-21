@@ -1,19 +1,20 @@
 import type { Map as MLMap } from "maplibre-gl";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import type { MapTileConfig } from "../config";
 
 export type BaseStyle = "satellite" | "chart";
 export type ViewMode = "chase" | "chartplotter";
 
-const ESRI_ATTR =
-  'Imagery © <a href="https://www.esri.com/">Esri</a>, Maxar, Earthstar Geographics';
 export const OSM_ATTR =
   'Harbor/map data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>';
+const OPENSEAMAP_ATTR =
+  'Seamarks © <a href="https://www.openseamap.org/">OpenSeaMap contributors</a> · <a href="https://creativecommons.org/licenses/by-sa/2.0/">CC BY-SA 2.0</a>';
 
 /**
- * Map canvas: Esri World Imagery satellite by default, OSM standard +
- * OpenSeaMap nautical overlay as the chart style. The camera is driven by
- * the sim (chase / chartplotter modes).
+ * Map canvas: OSM standard + OpenSeaMap nautical overlay by default, with an
+ * operator-configured satellite layer when its terms and attribution permit.
+ * The camera is driven by the sim (chase / chartplotter modes).
  */
 export function createMap(container: HTMLElement, center: { lng: number; lat: number }): MLMap {
   const map = new maplibregl.Map({
@@ -32,26 +33,25 @@ export function createMap(container: HTMLElement, center: { lng: number; lat: nu
   return map;
 }
 
-export function setBaseStyle(map: MLMap, style: BaseStyle): void {
-  for (const id of ["esri-satellite", "osm-standard", "openseamap"]) {
+export function setBaseStyle(map: MLMap, style: BaseStyle, tiles: MapTileConfig): void {
+  for (const id of ["satellite", "osm-standard", "openseamap"]) {
     if (map.getLayer(id)) map.removeLayer(id);
     if (map.getSource(id)) map.removeSource(id);
   }
   if (style === "satellite") {
-    map.addSource("esri-satellite", {
+    if (!tiles.satellite) throw new Error("Satellite tiles are not configured");
+    map.addSource("satellite", {
       type: "raster",
-      tiles: [
-        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-      ],
+      tiles: [tiles.satellite.url],
       tileSize: 256,
       maxzoom: 19,
-      attribution: ESRI_ATTR,
+      attribution: tiles.satellite.attribution,
     });
-    map.addLayer({ id: "esri-satellite", type: "raster", source: "esri-satellite" });
+    map.addLayer({ id: "satellite", type: "raster", source: "satellite" });
   } else {
     map.addSource("osm-standard", {
       type: "raster",
-      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      tiles: [tiles.osmUrl],
       tileSize: 256,
       maxzoom: 19,
       attribution: OSM_ATTR,
@@ -59,10 +59,9 @@ export function setBaseStyle(map: MLMap, style: BaseStyle): void {
     map.addLayer({ id: "osm-standard", type: "raster", source: "osm-standard" });
     map.addSource("openseamap", {
       type: "raster",
-      tiles: ["https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png"],
+      tiles: [tiles.seamarkUrl],
       tileSize: 256,
-      attribution:
-        'Seamarks © <a href="https://www.openseamap.org/">OpenSeaMap contributors</a>',
+      attribution: OPENSEAMAP_ATTR,
     });
     map.addLayer({ id: "openseamap", type: "raster", source: "openseamap" });
   }
@@ -97,8 +96,7 @@ export class CameraRig {
   }
 
   private targetZoom(): number {
-    // beyond ~19 the satellite tiles over-zoom (softer background) but the
-    // 3D geometry stays crisp — worth it for inspecting sail trim
+    // Beyond ~19 raster tiles may over-zoom, while the 3D geometry stays crisp.
     const base = this.mode === "chase" ? 17.4 : 15.8;
     return Math.min(21, Math.max(13, base + this.zoomOffset));
   }

@@ -5,6 +5,8 @@ export interface ControlState {
   sheetTargetDeg: number;
   /** Jib-sheet outward club-boom angle limit, deg. */
   jibTargetDeg: number;
+  /** Crew/winger is holding the jib boom to weather on a deep run. */
+  jibWinged: boolean;
   auxOn: boolean;
 }
 
@@ -21,7 +23,13 @@ export interface JibTrimConfig {
  * Casual steering mode flips the tiller sign (right key = turn right).
  */
 export class Controls {
-  state: ControlState = { tiller: 0, sheetTargetDeg: 15, jibTargetDeg: 15, auxOn: false };
+  state: ControlState = {
+    tiller: 0,
+    sheetTargetDeg: 15,
+    jibTargetDeg: 15,
+    jibWinged: false,
+    auxOn: false,
+  };
   realisticTiller = true;
   private keys = new Set<string>();
   private touchTiller = 0;

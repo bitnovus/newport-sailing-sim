@@ -30,7 +30,7 @@ function runTack(maxDeg: number): void {
     const tel = sim.telemetry();
     if (i % 60 === 0) {
       sheet = Math.abs(idealBoomAngle(tel.awa));
-      jib = Math.abs(tel.awa) / 2;
+      jib = Math.abs(idealBoomAngle(tel.awa));
     }
     sim.step(DT, {
       tiller: headingHold(sim, 315),

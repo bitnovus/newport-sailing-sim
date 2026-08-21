@@ -76,6 +76,23 @@ if (!name || !southS || !westS || !northS || !eastS) {
   console.error("usage: npm run fetch-harbor <name> <south> <west> <north> <east>");
   process.exit(1);
 }
+if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)) {
+  console.error("harbor name must be a lowercase slug such as newport-harbor");
+  process.exit(1);
+}
+const [south, west, north, east] = [southS, westS, northS, eastS].map(Number);
+if (
+  ![south, west, north, east].every(Number.isFinite) ||
+  south < -90 ||
+  north > 90 ||
+  west < -180 ||
+  east > 180 ||
+  south >= north ||
+  west >= east
+) {
+  console.error("bbox must contain valid south west north east coordinates");
+  process.exit(1);
+}
 const bbox = `${southS},${westS},${northS},${eastS}`;
 
 // Water surfaces: harbors, bays, rivers, basins, docks. We deliberately do NOT
@@ -104,7 +121,17 @@ for (const id of relIds) {
   const full = await runQuery(`[out:json][timeout:90];relation(${id});out geom;`);
   elements.push(...full.filter((e) => e.type === "relation"));
 }
-const fc = toFeatureCollection(elements);
+const fc = {
+  ...toFeatureCollection(elements),
+  metadata: {
+    source: "OpenStreetMap contributors via Overpass API",
+    sourceUrl: "https://www.openstreetmap.org/copyright",
+    license: "ODbL-1.0",
+    licenseUrl: "https://opendatacommons.org/licenses/odbl/1-0/",
+    generatedAt: new Date().toISOString(),
+    bbox: { south, west, north, east },
+  },
+};
 const outDir = join(import.meta.dirname, "..", "src", "harbors", name);
 mkdirSync(outDir, { recursive: true });
 writeFileSync(join(outDir, "water.json"), JSON.stringify(fc));

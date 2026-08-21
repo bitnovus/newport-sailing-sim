@@ -4,9 +4,11 @@ import { add, headingVec, len, starboardVec, v, type Vec2 } from "./vec";
 import { Environment } from "./environment";
 import { apparentWind, type ApparentWind, type TrueWind } from "./physics/wind";
 import {
+  downwindExposure,
   sheetedBoomRestAngle,
   solveRig,
   stepSheetedBoom,
+  stepWingedBoom,
   type SailSolution,
 } from "./physics/sails";
 import {
@@ -23,6 +25,9 @@ import {
 export interface WaterDomain {
   contains(p: Vec2): boolean;
 }
+
+/** Minimum apparent-wind angle at which the Harbor 20 jib winger can engage. */
+export const JIB_WING_MIN_AWA_DEG = 158;
 
 export interface BoatState {
   /** Position in the harbor's local East/North plane, meters. */
@@ -48,6 +53,10 @@ export interface BoatState {
   boomDeg: Record<string, number>;
   /** Actual angular velocity per sail, deg/s. Used by freely swinging booms. */
   boomRateDeg: Record<string, number>;
+  /** True while the jib-winger control is holding the club boom to weather. */
+  jibWinged: boolean;
+  /** Latched physical side selected by the winger: −1 port, +1 starboard. */
+  jibWingSide: number;
   /** Electric auxiliary on/off. */
   auxOn: boolean;
   /** True while the hull is in contact with non-navigable shoreline. */
@@ -65,6 +74,8 @@ export interface SimInputs {
   sheetTargetDeg: number;
   /** Jib-sheet outward club-boom angle limit, deg from centerline. */
   jibTargetDeg: number;
+  /** Throw and hold the club-boomed jib opposite the main on a deep run. */
+  jibWinged?: boolean;
   auxOn: boolean;
 }
 
@@ -83,6 +94,7 @@ export interface Telemetry {
   rudderDeg: number;
   sheetDeg: number;
   jibDeg: number;
+  jibWinged: boolean;
   sails: SailSolution[];
 }
 
@@ -129,6 +141,8 @@ export class Sim {
         boat.sails.map((sail) => [sail.id, sail.trim.initial]),
       ),
       boomRateDeg: Object.fromEntries(boat.sails.map((sail) => [sail.id, 0])),
+      jibWinged: false,
+      jibWingSide: 0,
       auxOn: false,
       aground: false,
     };
@@ -140,6 +154,8 @@ export class Sim {
     this.state.u = this.state.v = this.state.r = 0;
     this.state.heel = this.state.heelRate = 0;
     this.state.aground = false;
+    this.state.jibWinged = false;
+    this.state.jibWingSide = 0;
     this.lastWaterPos = pos;
     this.floats = [];
     this.time = 0;
@@ -198,9 +214,16 @@ export class Sim {
     const aw = apparentWind(this.trueWind, s.heading, groundVel);
     this.lastAw = aw;
 
-    // ---- boom dynamics: both the main and the club-boomed self-tending jib
-    // swing under apparent-wind torque. Each sheet is only an outward stop. ----
-    for (const sail of b.sails) {
+    // ---- boom dynamics: free sails swing under apparent-wind torque. The
+    // leeward jib winks as the main's wake unloads it; an engaged class-style
+    // winger throws and holds its club boom on the opposite side. ----
+    const mainSail = b.sails.find((sail) => sail.trim.kind === "sheet");
+    const orderedSails = mainSail
+      ? [mainSail, ...b.sails.filter((sail) => sail !== mainSail)]
+      : b.sails;
+    let mainBoom = mainSail ? (s.boomDeg[mainSail.id] ?? 0) : 0;
+
+    for (const sail of orderedSails) {
       const sheetLimit = sail.trim.kind === "sheet" ? s.sheetDeg : s.jibDeg;
       const boundedLimit = clamp(sheetLimit, sail.trim.min, sail.trim.max);
       const initial =
@@ -211,28 +234,81 @@ export class Sim {
               -boundedLimit,
               boundedLimit,
             );
-      if (!this.boomsInitialized) {
-        s.boomDeg[sail.id] = initial;
-        s.boomRateDeg[sail.id] = 0;
+      const current = {
+        angleDeg: this.boomsInitialized
+          ? (s.boomDeg[sail.id] ?? initial)
+          : initial,
+        rateDeg: this.boomsInitialized
+          ? (s.boomRateDeg[sail.id] ?? 0)
+          : 0,
+      };
+
+      let next = current;
+      if (sail.trim.kind === "selfTacking") {
+        const canWing =
+          Boolean(inputs.jibWinged) &&
+          Math.abs(aw.angle) >= JIB_WING_MIN_AWA_DEG;
+        if (canWing && !s.jibWinged) {
+          const mainSide = Math.sign(mainBoom) || Math.sign(aw.angle) || 1;
+          s.jibWinged = true;
+          s.jibWingSide = -mainSide;
+        } else if (!canWing) {
+          s.jibWinged = false;
+          s.jibWingSide = 0;
+        }
+
+        if (s.jibWinged) {
+          next = stepWingedBoom(
+            sail,
+            sail.trim.max,
+            s.jibWingSide,
+            current,
+            dt,
+          );
+        } else if (this.boomsInitialized) {
+          const jibSide = Math.sign(current.angleDeg);
+          const mainSide = Math.sign(mainBoom);
+          const sameSide =
+            jibSide === 0 || mainSide === 0 || jibSide === mainSide;
+          const exposure = downwindExposure(sail, aw.angle, sameSide);
+          next = stepSheetedBoom(sail, aw, sheetLimit, current, dt, {
+            pressureScale: exposure,
+            centeringStrength: 5 * (1 - exposure),
+          });
+        }
       } else {
-        const next = stepSheetedBoom(
-          sail,
-          aw,
-          sheetLimit,
-          {
-            angleDeg: s.boomDeg[sail.id] ?? initial,
-            rateDeg: s.boomRateDeg[sail.id] ?? 0,
-          },
-          dt,
-        );
-        s.boomDeg[sail.id] = next.angleDeg;
-        s.boomRateDeg[sail.id] = next.rateDeg;
+        if (this.boomsInitialized) {
+          next = stepSheetedBoom(sail, aw, sheetLimit, current, dt);
+        }
       }
+      s.boomDeg[sail.id] = next.angleDeg;
+      s.boomRateDeg[sail.id] = next.rateDeg;
+      if (sail === mainSail) mainBoom = next.angleDeg;
     }
     this.boomsInitialized = true;
 
     // ---- rig forces ----
-    const rig = solveRig(b, aw, s.sheetDeg, s.jibDeg, s.heel, s.boomDeg);
+    const wingedSails = new Set<string>();
+    if (s.jibWinged && Math.sign(mainBoom) !== s.jibWingSide) {
+      for (const sail of b.sails) {
+        if (
+          sail.trim.kind === "selfTacking" &&
+          Math.sign(s.boomDeg[sail.id]) === s.jibWingSide &&
+          Math.abs(s.boomDeg[sail.id]) >= sail.trim.min
+        ) {
+          wingedSails.add(sail.id);
+        }
+      }
+    }
+    const rig = solveRig(
+      b,
+      aw,
+      s.sheetDeg,
+      s.jibDeg,
+      s.heel,
+      s.boomDeg,
+      wingedSails,
+    );
     this.lastSails = rig.sails;
 
     // ---- hydro forces ----
@@ -330,6 +406,7 @@ export class Sim {
       rudderDeg: s.rudderDeg,
       sheetDeg: s.sheetDeg,
       jibDeg: s.jibDeg,
+      jibWinged: s.jibWinged,
       sails: this.lastSails,
     };
   }

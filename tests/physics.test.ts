@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { Sim } from "../src/core/sim";
+import { JIB_WING_MIN_AWA_DEG, Sim } from "../src/core/sim";
 import { Environment } from "../src/core/environment";
 import { harbor20 } from "../src/boats/harbor20";
 import { kn, toKn, wrapDeg, DEG } from "../src/core/units";
-import { auxiliaryThrust, rudderForces } from "../src/core/physics/hydro";
+import { auxiliaryThrust, hullDrag, rudderForces } from "../src/core/physics/hydro";
 import {
+  downwindExposure,
   idealBoomAngle,
   luffFraction,
   sailCoefficients,
@@ -12,6 +13,7 @@ import {
   sheetedBoomRestAngle,
   solveSail,
   stepSheetedBoom,
+  stepWingedBoom,
 } from "../src/core/physics/sails";
 import { MobDrill, MOB_ARM_DISTANCE_M } from "../src/ui/hud";
 
@@ -40,11 +42,11 @@ function makeConstantSim(windKn: number, dirFrom = 0): Sim {
 
 /** Previous auto-trim heuristic, used when a physics test needs an ideal crew. */
 function idealJibTrim(sim: Sim): number {
-  return Math.abs(sim.telemetry().awa) / 2;
+  return Math.abs(idealBoomAngle(sim.telemetry().awa));
 }
 
 /** Sail with auto-trim for `seconds`, returning the final telemetry. */
-function sailFor(sim: Sim, seconds: number, headingDeg: number) {
+function sailFor(sim: Sim, seconds: number, headingDeg: number, jibWinged = false) {
   for (let i = 0; i < seconds / DT; i++) {
     const tel = sim.telemetry();
     const sheet = i === 0 ? 15 : Math.abs(idealBoomAngle(tel.awa));
@@ -52,6 +54,7 @@ function sailFor(sim: Sim, seconds: number, headingDeg: number) {
       tiller: headingHold(sim, headingDeg),
       sheetTargetDeg: sheet,
       jibTargetDeg: i === 0 ? 15 : idealJibTrim(sim),
+      jibWinged,
       auxOn: false,
     });
   }
@@ -70,6 +73,13 @@ function polarPoint(windKn: number, twaDeg: number): number {
   sim.state.heading = ((twaDeg + 360) % 360) * (Math.PI / 180);
   const t = sailFor(sim, 120, twaDeg);
   return t.sog;
+}
+
+function steadyPoint(windKn: number, twaDeg: number, seconds = 120, jibWinged = false) {
+  const sim = makeConstantSim(windKn, 0);
+  sim.state.heading = twaDeg * DEG;
+  const telemetry = sailFor(sim, seconds, twaDeg, jibWinged);
+  return { sim, telemetry };
 }
 
 describe("Harbor 20 class specification", () => {
@@ -183,6 +193,102 @@ describe("sail aerodynamics", () => {
     expect(Math.abs(boom.angleDeg)).toBeLessThanOrEqual(60);
   });
 
+  it("models a shadowed jib wink and a supported reverse-face wing", () => {
+    const jib = harbor20.sails.find((sail) => sail.id === "jib")!;
+    const awa = { speed: kn(8), angle: 175, vector: { x: 0, y: 0 } };
+    const shadowed = solveSail(jib, awa, 75, 0, { blanketed: true });
+    const unsupported = solveSail(jib, awa, -75, 0, { blanketed: false });
+    const winged = solveSail(jib, awa, -75, 0, {
+      winged: true,
+      blanketed: false,
+    });
+
+    expect(downwindExposure(jib, 140)).toBe(1);
+    expect(downwindExposure(jib, 175)).toBeCloseTo(0.375, 6);
+    expect(shadowed.winking).toBe(true);
+    expect(shadowed.flow).toBeGreaterThan(0.35);
+    expect(shadowed.flow).toBeLessThan(downwindExposure(jib, 175));
+    expect(shadowed.luffing).toBe(true);
+    expect(unsupported.flow).toBe(0);
+    expect(unsupported.luffing).toBe(true);
+    expect(winged.winged).toBe(true);
+    expect(winged.winking).toBe(false);
+    expect(winged.luffing).toBe(false);
+    expect(winged.flow).toBe(1);
+    expect(winged.drive).toBeGreaterThan(shadowed.drive * 1.3);
+  });
+
+  it("loses projected area when a downwind sail is over-sheeted", () => {
+    const main = harbor20.sails.find((sail) => sail.id === "main")!;
+    const awa = { speed: kn(8), angle: 175, vector: { x: 0, y: 0 } };
+    const eased = solveSail(main, awa, 85, 0, { blanketed: false });
+    const overSheeted = solveSail(main, awa, 8, 0, { blanketed: false });
+
+    expect(sailCoefficients(90).cd).toBeGreaterThan(1.6);
+    expect(sailCoefficients(170).cd).toBeLessThan(0.2);
+    expect(luffFraction(170)).toBeGreaterThan(0.8);
+    expect(eased.drive).toBeGreaterThan(overSheeted.drive * 8);
+    expect(eased.flow).toBeGreaterThan(overSheeted.flow);
+  });
+
+  it("moves the club boom to weather at a finite rate when winged", () => {
+    const jib = harbor20.sails.find((sail) => sail.id === "jib")!;
+    if (jib.trim.kind !== "selfTacking") throw new Error("jib must self-tend");
+    let boom = { angleDeg: 75, rateDeg: 0 };
+    let crossedAt: number | null = null;
+    let maxStep = 0;
+
+    for (let i = 0; i < 5 / DT; i++) {
+      const previous = boom.angleDeg;
+      boom = stepWingedBoom(jib, jib.trim.max, -1, boom, DT);
+      maxStep = Math.max(maxStep, Math.abs(boom.angleDeg - previous));
+      if (crossedAt === null && previous > 0 && boom.angleDeg <= 0) {
+        crossedAt = i * DT;
+      }
+    }
+
+    expect(crossedAt).not.toBeNull();
+    expect(crossedAt!).toBeGreaterThan(0.5);
+    expect(maxStep).toBeLessThanOrEqual(jib.trim.maxBoomRate * DT + 1e-9);
+    expect(boom.angleDeg).toBeCloseTo(-jib.trim.max, 1);
+    expect(Math.abs(boom.rateDeg)).toBeLessThan(0.2);
+  });
+
+  it("engages wing-and-wing only on a deep run and overrides trim non-destructively", () => {
+    const shallow = makeConstantSim(8, 0);
+    shallow.state.heading = 90 * DEG;
+    shallow.step(DT, {
+      tiller: 0,
+      sheetTargetDeg: 50,
+      jibTargetDeg: 15,
+      jibWinged: true,
+      auxOn: false,
+    });
+    expect(Math.abs(shallow.telemetry().awa)).toBeLessThan(JIB_WING_MIN_AWA_DEG);
+    expect(shallow.state.jibWinged).toBe(false);
+
+    const deep = makeConstantSim(8, 0);
+    deep.state.heading = 175 * DEG;
+    for (let i = 0; i < 6 / DT; i++) {
+      deep.step(DT, {
+        tiller: 0,
+        sheetTargetDeg: 85,
+        jibTargetDeg: 15,
+        jibWinged: true,
+        auxOn: false,
+      });
+    }
+
+    const tel = deep.telemetry();
+    const jib = tel.sails.find((sail) => sail.sailId === "jib")!;
+    expect(deep.state.jibWinged).toBe(true);
+    expect(Math.sign(deep.state.boomDeg.jib)).toBe(-Math.sign(deep.state.boomDeg.main));
+    expect(Math.abs(deep.state.boomDeg.jib)).toBeGreaterThan(70);
+    expect(jib.winged).toBe(true);
+    expect(jib.flow).toBe(1);
+    expect(tel.jibDeg).toBe(15);
+  });
+
   it("does not invent boom motion without wind or existing momentum", () => {
     const main = harbor20.sails.find((sail) => sail.id === "main")!;
     const calm = { speed: 0, angle: -60, vector: { x: 0, y: 0 } };
@@ -226,6 +332,14 @@ describe("sail aerodynamics", () => {
     expect(rudder.side).toBeLessThan(0);
     expect(rudder.yaw).toBeGreaterThan(0);
     expect(rudder.yaw).toBeCloseTo(-rudder.side * harbor20.rudder.arm, 8);
+  });
+
+  it("opposes both forward motion and sternway with hull resistance", () => {
+    const forward = hullDrag(harbor20, 0.5);
+    const astern = hullDrag(harbor20, -0.5);
+    expect(forward).toBeGreaterThan(0);
+    expect(astern).toBeLessThan(0);
+    expect(Math.abs(astern)).toBeGreaterThan(forward * 10);
   });
 
   it("luffs below the luffing threshold", () => {
@@ -273,7 +387,8 @@ describe("sail aerodynamics", () => {
     expect(close).toBeLessThan(beam);
     expect(beam).toBeLessThan(run);
     expect(close).toBeLessThan(15);
-    expect(run).toBeGreaterThan(60);
+    expect(idealBoomAngle(70)).toBe(52);
+    expect(run).toBe(85);
   });
 });
 
@@ -309,6 +424,85 @@ describe("steady-state sailing (mini polar)", () => {
     expect(reach).toBeGreaterThan(close - 0.4);
   }, 30000);
 
+  it("follows the expected speed order across every principal point of sail", () => {
+    const closeHauled = polarPoint(12, 45);
+    const closeReach = polarPoint(12, 60);
+    const beamReach = polarPoint(12, 90);
+    const broadReach = polarPoint(12, 120);
+    const run = polarPoint(12, 180);
+
+    expect(closeReach).toBeGreaterThan(closeHauled);
+    expect(beamReach).toBeGreaterThan(closeReach);
+    expect(beamReach).toBeGreaterThan(broadReach);
+    expect(broadReach).toBeGreaterThan(run);
+    expect(run).toBeLessThan(closeHauled);
+  }, 30000);
+
+  it("progressively eases and unloads the boat while bearing away", () => {
+    const closeHauled = steadyPoint(12, 45);
+    const beamReach = steadyPoint(12, 90);
+    const broadReach = steadyPoint(12, 120);
+    const run = steadyPoint(12, 175);
+
+    const mainAngle = (point: ReturnType<typeof steadyPoint>) =>
+      Math.abs(point.sim.state.boomDeg.main);
+    expect(mainAngle(closeHauled)).toBeLessThan(mainAngle(beamReach));
+    expect(mainAngle(beamReach)).toBeLessThan(mainAngle(broadReach));
+    expect(mainAngle(broadReach)).toBeLessThan(mainAngle(run));
+
+    expect(Math.abs(closeHauled.telemetry.heelDeg)).toBeGreaterThan(
+      Math.abs(beamReach.telemetry.heelDeg),
+    );
+    expect(Math.abs(beamReach.telemetry.heelDeg)).toBeGreaterThan(
+      Math.abs(broadReach.telemetry.heelDeg),
+    );
+    expect(Math.abs(broadReach.telemetry.heelDeg)).toBeGreaterThan(
+      Math.abs(run.telemetry.heelDeg),
+    );
+    expect(Math.abs(closeHauled.telemetry.leeway)).toBeGreaterThan(
+      Math.abs(beamReach.telemetry.leeway),
+    );
+    expect(Math.abs(beamReach.telemetry.leeway)).toBeGreaterThan(
+      Math.abs(broadReach.telemetry.leeway),
+    );
+
+    const runJib = run.telemetry.sails.find((sail) => sail.sailId === "jib")!;
+    expect(runJib.winking).toBe(true);
+    expect(runJib.flow).toBeLessThan(0.5);
+  }, 30000);
+
+  it("makes wing-and-wing useful without making the dead run the fastest course", () => {
+    const closeHauled = steadyPoint(12, 45);
+    const normalRun = steadyPoint(12, 180);
+    const wingedRun = steadyPoint(12, 180, 120, true);
+    const jib = wingedRun.telemetry.sails.find((sail) => sail.sailId === "jib")!;
+
+    expect(wingedRun.telemetry.sog).toBeGreaterThan(normalRun.telemetry.sog + 0.08);
+    expect(wingedRun.telemetry.sog).toBeLessThan(closeHauled.telemetry.sog);
+    expect(jib.winged).toBe(true);
+    expect(Math.sign(wingedRun.sim.state.boomDeg.jib)).toBe(
+      -Math.sign(wingedRun.sim.state.boomDeg.main),
+    );
+  }, 30000);
+
+  it("mirrors speed, heel, leeway, and boom position on both tacks", () => {
+    for (const twa of [45, 60, 90, 120, 150, 175]) {
+      const port = steadyPoint(12, -twa, 90);
+      const starboard = steadyPoint(12, twa, 90);
+      expect(port.telemetry.sog).toBeCloseTo(starboard.telemetry.sog, 2);
+      expect(port.telemetry.heelDeg).toBeCloseTo(-starboard.telemetry.heelDeg, 2);
+      expect(port.telemetry.leeway).toBeCloseTo(-starboard.telemetry.leeway, 2);
+      expect(port.sim.state.boomDeg.main).toBeCloseTo(
+        -starboard.sim.state.boomDeg.main,
+        2,
+      );
+      expect(port.sim.state.boomDeg.jib).toBeCloseTo(
+        -starboard.sim.state.boomDeg.jib,
+        2,
+      );
+    }
+  }, 30000);
+
   it("does not exceed hull speed by much in 20 kn", () => {
     const sog = polarPoint(20, 90);
     expect(sog).toBeLessThan(6.2); // hull speed 5.6 kn
@@ -317,6 +511,34 @@ describe("steady-state sailing (mini polar)", () => {
   it("cannot make progress in the no-go zone", () => {
     const sog = polarPoint(12, 10);
     expect(sog).toBeLessThan(1.0);
+  }, 30000);
+
+  it("develops bounded sternway rather than hitting the reverse-speed clamp in irons", () => {
+    const speeds: number[] = [];
+    for (const windKn of [6, 12, 20]) {
+      const sim = makeConstantSim(windKn, 0);
+      for (let i = 0; i < 120 / DT; i++) {
+        sim.step(DT, {
+          tiller: 0,
+          sheetTargetDeg: 5,
+          jibTargetDeg: 8,
+          auxOn: false,
+        });
+      }
+      expect(sim.state.u).toBeLessThan(0);
+      expect(sim.state.u).toBeGreaterThan(-0.5);
+      speeds.push(Math.abs(sim.state.u));
+    }
+    expect(speeds[1]).toBeGreaterThan(speeds[0]);
+    expect(speeds[2]).toBeGreaterThan(speeds[1]);
+  }, 30000);
+
+  it("cannot hold an illegal upwind track even when the bow is pinched", () => {
+    for (const attemptedTwa of [20, 30, 35]) {
+      const { telemetry } = steadyPoint(12, attemptedTwa);
+      const courseOffWind = Math.abs(wrapDeg(telemetry.cog));
+      expect(courseOffWind).toBeGreaterThanOrEqual(35);
+    }
   }, 30000);
 });
 

@@ -2,26 +2,63 @@
   "name": "newport-sailing-sim",
   "private": true,
   "version": "0.1.0",
+  "description": "Browser-based 3D Newport Harbor sailing simulator with deterministic TypeScript physics.",
+  "license": "MIT",
+  "author": "Dan Chyan",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bitnovus/newport-sailing-sim.git"
+  },
+  "homepage": "https://bitnovus.github.io/newport-sailing-sim/",
+  "bugs": {
+    "url": "https://github.com/bitnovus/newport-sailing-sim/issues"
+  },
+  "keywords": [
+    "sailing",
+    "simulator",
+    "threejs",
+    "maplibre",
+    "typescript"
+  ],
   "type": "module",
+  "engines": {
+    "node": ">=22.12.0",
+    "npm": ">=11.19.0 <12"
+  },
+  "packageManager": "npm@11.19.0",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "fetch-harbor": "tsx scripts/fetch-harbor.ts"
+    "check": "npm run install-scripts:check && npm test && npm run licenses:check && npm run build",
+    "audit:prod": "npm audit --omit=dev",
+    "fetch-harbor": "tsx scripts/fetch-harbor.ts",
+    "install-scripts:check": "node scripts/check-install-scripts.mjs",
+    "licenses:generate": "node scripts/generate-third-party-licenses.mjs",
+    "licenses:check": "node scripts/generate-third-party-licenses.mjs --check"
   },
   "dependencies": {
-    "maplibre-gl": "^5.0.0",
+    "maplibre-gl": "^5.24.0",
     "three": "^0.170.0"
   },
   "devDependencies": {
     "@types/geojson": "^7946.0.16",
     "@types/node": "^26.2.0",
     "@types/three": "^0.170.0",
-    "osmtogeojson": "^3.0.0-beta.5",
-    "tsx": "^4.19.0",
-    "typescript": "^5.6.0",
-    "vite": "^6.0.0",
-    "vitest": "^2.1.0"
+    "osmtogeojson": "3.0.0-beta.5",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "osmtogeojson": {
+      "@xmldom/xmldom": "^0.8.13"
+    }
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "fsevents@2.3.3": true
   }
 }

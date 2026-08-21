@@ -137,7 +137,7 @@ export class SceneLayer implements CustomLayerInterface {
     }
     if (jib) {
       this.boat.jibSail.rotation.z = (jib.boomAngle * Math.PI) / 180;
-      this.boat.jibSailSurface.update(camber, side, jib.flow, t);
+      this.boat.jibSailSurface.update(camber, jib.winged ? -side : side, jib.flow, t);
     }
     this.boat.rudder.rotation.z = (-s.rudderDeg * Math.PI) / 180;
 

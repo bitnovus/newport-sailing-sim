@@ -29,6 +29,13 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 .hud-row { display: contents; }
 .hud-label { color: #8fb2c9; font-size: 11px; align-self: center; }
 .hud-value { text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; }
+.weather-credit {
+  grid-column: 1 / -1;
+  color: var(--accent);
+  font-size: 9px;
+  text-align: right;
+  pointer-events: auto;
+}
 
 .windex { width: 116px; flex: 0 0 auto; text-align: center; }
 .windex svg { width: 116px; height: 116px; display: block; }
@@ -71,6 +78,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
   cursor: pointer; backdrop-filter: blur(6px);
 }
 .tool:hover { border-color: var(--accent); color: var(--accent); }
+.tool.active, .tool[aria-pressed="true"] {
+  border-color: var(--accent); color: #08121c; background: var(--accent);
+}
 .tool.danger { border-color: rgba(255, 90, 95, 0.55); color: #ffb3b5; }
 .tool.danger:hover { border-color: var(--danger); color: var(--danger); }
 

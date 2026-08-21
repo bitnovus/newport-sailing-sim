@@ -29,7 +29,7 @@ for (let i = 0; i < seconds / DT; i++) {
   const tel = sim.telemetry();
   if (!useFixedTrim && i % 60 === 0) {
     sheet = Math.abs(idealBoomAngle(tel.awa));
-    jib = Math.abs(tel.awa) / 2;
+    jib = Math.abs(idealBoomAngle(tel.awa));
   }
   sim.step(DT, {
     tiller: headingHold(sim, twa),

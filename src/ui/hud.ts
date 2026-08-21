@@ -25,6 +25,7 @@ export class Hud {
   private rows: Record<string, HTMLElement> = {};
   private windMeter!: HTMLElement;
   private tillerArm!: SVGGElement | null;
+  private windCredit!: HTMLAnchorElement;
   private mobPanel!: HTMLElement;
   private alert!: HTMLElement;
 
@@ -92,6 +93,7 @@ export class Hud {
       ["twd", "TWD"],
       ["heel", "HEEL"],
       ["sheet", "MAIN"],
+      ["jib", "JIB"],
       ["tiller", "TILLER"],
       ["windsrc", "WIND"],
     ] as const) {
@@ -100,6 +102,11 @@ export class Hud {
       table.append(row);
       this.rows[key] = row.querySelector(".hud-value")!;
     }
+    this.windCredit = this.el("a", "weather-credit hidden", "Weather data by Open-Meteo.com") as HTMLAnchorElement;
+    this.windCredit.href = "https://open-meteo.com/";
+    this.windCredit.target = "_blank";
+    this.windCredit.rel = "noreferrer";
+    table.append(this.windCredit);
     panel.append(table);
     this.root.append(panel);
 
@@ -123,7 +130,7 @@ export class Hud {
    * @param tiller −1..1 as the helmsman holds it: + = pushed to starboard
    * (which turns the boat to port in realistic tiller mode).
    */
-  update(tel: Telemetry, windStatus: string, tiller = 0): void {
+  update(tel: Telemetry, windStatus: string, tiller = 0, showWindCredit = false): void {
     this.rows.sog.textContent = `${fmt(tel.sog)} kn`;
     this.rows.cog.textContent = `${fmt(tel.cog, 0)}° ${bearingLabel(tel.cog)}`;
     this.rows.aws.textContent = `${fmt(tel.aws)} kn`;
@@ -132,12 +139,20 @@ export class Hud {
     this.rows.twd.textContent = `${fmt((twd => ((twd % 360) + 360) % 360)(tel.twd), 0)}°`;
     this.rows.heel.textContent = `${fmt(Math.abs(tel.heelDeg), 0)}° ${tel.heelDeg >= 0 ? "S" : "P"}`;
     this.rows.sheet.textContent = `${fmt(tel.sheetDeg, 0)}°`;
+    const jib = tel.sails.find((sail) => sail.sailId === "jib");
+    let jibStatus = `${fmt(tel.jibDeg, 0)}°`;
+    if (jib?.luffing) jibStatus = "LUFFING";
+    if (jib?.winking) jibStatus = "WINKING";
+    if (tel.jibWinged) jibStatus = "SETTING";
+    if (jib?.winged) jibStatus = "WINGED";
+    this.rows.jib.textContent = jibStatus;
     const tillerDeg = Math.round(Math.abs(tiller) * 35); // tiller arc ±35° hard-over
     this.rows.tiller.textContent =
       Math.abs(tiller) < 0.03
         ? "centered"
         : `${Math.round(Math.abs(tiller) * 100)}% ${tiller > 0 ? "→" : "←"} (${tillerDeg}°)`;
     this.rows.windsrc.textContent = windStatus;
+    this.windCredit.classList.toggle("hidden", !showWindCredit);
 
     const awaArrow = this.windMeter.querySelector("#hud-awa-arrow");
     const twaArrow = this.windMeter.querySelector("#hud-twa-arrow");

@@ -3,22 +3,14 @@ name: Test and deploy to GitHub Pages
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: true
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  test-and-build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -26,20 +18,42 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: lts/*
+          node-version: 24
           cache: npm
+      - name: Use pinned npm
+        run: npm install --global npm@11.19.0
       - name: Install dependencies
         run: npm ci
-      - name: Test
-        run: npm test
-      - name: Build
-        run: npm run build
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
-      - name: Upload artifact
+      - name: Check
+        run: npm run check
+        env:
+          VITE_BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_ENABLE_LIVE_WIND: ${{ vars.VITE_ENABLE_LIVE_WIND }}
+          VITE_OPEN_METEO_BASE_URL: ${{ vars.VITE_OPEN_METEO_BASE_URL }}
+          VITE_SATELLITE_TILE_URL: ${{ vars.VITE_SATELLITE_TILE_URL }}
+          VITE_SATELLITE_ATTRIBUTION: ${{ vars.VITE_SATELLITE_ATTRIBUTION }}
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: ./dist
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: test-and-build
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: true
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5
