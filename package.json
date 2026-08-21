@@ -39,7 +39,7 @@
     "licenses:check": "node scripts/generate-third-party-licenses.mjs --check"
   },
   "dependencies": {
-    "maplibre-gl": "^5.24.0",
+    "maplibre-gl": "^6.4.1",
     "three": "^0.170.0"
   },
   "devDependencies": {
