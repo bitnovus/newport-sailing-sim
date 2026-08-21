@@ -23,7 +23,10 @@ export const harbor20: BoatDefinition = {
   lwl: 5.23,
   beam: 2.13,
   draft: 1.07,
-  mass: 884.5, // 1,950 lb class-ready boat with rigging/equipment; crew omitted
+  mass: 884.5, // 1,950 lb class-ready boat with rigging/equipment
+  // Representative three-person training load at 75 kg each. Keep this
+  // separate so the published class-ready weight remains independently testable.
+  crewMass: 225,
   // Slender-hull estimate is ~2,740 kg·m²; the keel and end structure carry
   // enough mass fore/aft that the boat should retain turn momentum in a tack.
   yawInertia: 2800,

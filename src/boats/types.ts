@@ -55,8 +55,10 @@ export interface BoatDefinition {
   lwl: number;
   beam: number;
   draft: number;
-  /** Simulated sailing mass, kg; each boat definition documents its included load. */
+  /** Equipped boat mass, kg; each definition documents its included load. */
   mass: number;
+  /** Representative crew load included in translational inertia, kg. */
+  crewMass: number;
   /** Rotational inertia in yaw, kg·m². */
   yawInertia: number;
   /** Wetted surface area, m². */

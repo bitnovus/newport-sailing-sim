@@ -9,7 +9,7 @@ import { SceneLayer } from "./render/scene";
 import { Controls } from "./ui/controls";
 import { Hud, MobDrill } from "./ui/hud";
 import { ManualWind, OpenMeteoWind } from "./providers/open-meteo";
-import { DEG, kn } from "./core/units";
+import { DEG, kn, toKn } from "./core/units";
 import { appConfig } from "./config";
 
 const HARBOR_ID = "newport-harbor";
@@ -368,7 +368,7 @@ function frame(now: number): void {
   const mob = sim.floats.find((f) => f.id === "mob");
   if (mob) {
     const br = sim.bearingAndRange(mob.pos);
-    drill.update(dt, tel, br.bearing, br.distance);
+    drill.update(dt, br.bearing, br.distance, toKn(sim.relativeSpeedTo(mob)));
     hud.updateMob(drill.status);
   }
 

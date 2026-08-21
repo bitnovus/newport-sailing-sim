@@ -1,6 +1,6 @@
 import type { BoatDefinition } from "../boats/types";
 import { clamp, DEG, toDeg, toKn } from "./units";
-import { add, headingVec, len, starboardVec, v, type Vec2 } from "./vec";
+import { add, headingVec, len, starboardVec, sub, v, type Vec2 } from "./vec";
 import { Environment } from "./environment";
 import { apparentWind, type ApparentWind, type TrueWind } from "./physics/wind";
 import {
@@ -102,6 +102,8 @@ export interface Telemetry {
 export interface FloatingObject {
   id: string;
   pos: Vec2;
+  /** Instantaneous ground velocity, m/s, including current and windage. */
+  velocity: Vec2;
   /** Fraction of true-wind speed it drifts downwind (0.025 ≈ dan buoy). */
   windage: number;
   droppedAt: number;
@@ -170,6 +172,7 @@ export class Sim {
     const f: FloatingObject = {
       id,
       pos: { ...this.state.pos },
+      velocity: this.floatVelocity(windage),
       windage,
       droppedAt: this.time,
     };
@@ -316,6 +319,7 @@ export class Sim {
     const lwDrag = leewayDrag(s.u, s.v);
     const rudder = rudderForces(b, s.u, s.rudderDeg);
     const aux = s.auxOn ? auxiliaryThrust(b, s.u) : 0;
+    const translationalMass = b.mass + b.crewMass;
 
     // Weather helm from the heeled underwater body needs forward flow. Let it
     // fade to zero without steerage so a boat starting from rest can build way
@@ -324,18 +328,22 @@ export class Sim {
 
     // ---- surge: explicit (drag wall keeps u tame) ----
     const fx = rig.total.drive + aux + rudder.drag - drag + lwDrag;
-    s.u = Math.max(-0.5, Math.min(8, s.u + (fx / b.mass + s.v * s.r) * dt));
+    s.u = Math.max(-0.5, Math.min(8, s.u + (fx / translationalMass + s.v * s.r) * dt));
 
     // ---- sway: semi-implicit quadratic solve (explicit diverges at 60 Hz) ----
     // m·(v − v0)/dt = side − k·v − c·v·|v|, Newton from v0
     const { k, c } = lateralDamping(b, s.u);
     const totalSide = rig.total.side + rudder.side;
-    let nv = s.v + ((totalSide / b.mass) * dt - s.u * s.r * dt) * 0.5;
+    let nv = s.v + ((totalSide / translationalMass) * dt - s.u * s.r * dt) * 0.5;
     for (let i = 0; i < 4; i++) {
       const R = k * nv + c * nv * Math.abs(nv);
-      const F = (b.mass * (nv - s.v)) / dt - totalSide + R + b.mass * s.u * s.r;
+      const F =
+        (translationalMass * (nv - s.v)) / dt -
+        totalSide +
+        R +
+        translationalMass * s.u * s.r;
       const dR = k + 2 * c * Math.abs(nv);
-      nv -= F / (b.mass / dt + dR);
+      nv -= F / (translationalMass / dt + dR);
     }
     s.v = Math.max(-3, Math.min(3, nv));
 
@@ -376,21 +384,45 @@ export class Sim {
     }
 
     // ---- floating objects drift: current + windage ----
-    const twVec = this.trueWind;
-    const toward = ((twVec.directionFrom + 180) * DEG);
-    const drift = v(Math.sin(toward), Math.cos(toward));
     for (const f of this.floats) {
-      f.pos.x += (this.env.current.x + drift.x * twVec.speed * f.windage) * dt;
-      f.pos.y += (this.env.current.y + drift.y * twVec.speed * f.windage) * dt;
+      f.velocity = this.floatVelocity(f.windage);
+      f.pos.x += f.velocity.x * dt;
+      f.pos.y += f.velocity.y * dt;
     }
+  }
+
+  /** Ground velocity of the boat's center of mass, m/s. */
+  private boatGroundVelocity(): Vec2 {
+    const s = this.state;
+    const along = headingVec(s.heading);
+    const stbd = starboardVec(s.heading);
+    return add(
+      v(s.u * along.x + s.v * stbd.x, s.u * along.y + s.v * stbd.y),
+      this.env.current,
+    );
+  }
+
+  /** Ground velocity of a floating marker at the current wind sample, m/s. */
+  private floatVelocity(windage: number): Vec2 {
+    const toward = (this.trueWind.directionFrom + 180) * DEG;
+    const downwind = v(Math.sin(toward), Math.cos(toward));
+    return add(
+      this.env.current,
+      v(
+        downwind.x * this.trueWind.speed * windage,
+        downwind.y * this.trueWind.speed * windage,
+      ),
+    );
+  }
+
+  /** Boat speed relative to a drifting object, m/s. */
+  relativeSpeedTo(f: FloatingObject): number {
+    return len(sub(this.boatGroundVelocity(), f.velocity));
   }
 
   telemetry(): Telemetry {
     const s = this.state;
-    const along = headingVec(s.heading);
-    const stbd = starboardVec(s.heading);
-    const waterVel = v(s.u * along.x + s.v * stbd.x, s.u * along.y + s.v * stbd.y);
-    const groundVel = add(waterVel, this.env.current);
+    const groundVel = this.boatGroundVelocity();
     const cog = (Math.atan2(groundVel.x, groundVel.y) / DEG + 360) % 360;
     return {
       sog: toKn(len(groundVel)),

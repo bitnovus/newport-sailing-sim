@@ -90,6 +90,8 @@ describe("Harbor 20 class specification", () => {
     const jib = harbor20.sails.find((sail) => sail.id === "jib")!;
 
     expect(harbor20.mass).toBeCloseTo(1950 * poundsToKg, 1);
+    expect(harbor20.crewMass).toBe(3 * 75);
+    expect(harbor20.mass + harbor20.crewMass).toBeCloseTo(1109.5, 1);
     expect(main.area).toBeCloseTo(153 * squareFeetToSquareMeters, 2);
     expect(jib.area).toBeCloseTo(77 * squareFeetToSquareMeters, 2);
     expect(harbor20.closeHauledTwa).toBe(45);
@@ -543,6 +545,51 @@ describe("steady-state sailing (mini polar)", () => {
 });
 
 describe("dynamic behavior", () => {
+  it("coasts a useful final-approach distance with both sheets released", () => {
+    const sim = makeConstantSim(12, 0);
+    sim.state.heading = 45 * DEG;
+
+    for (let i = 0; i < 120 / DT; i++) {
+      sim.step(DT, {
+        tiller: headingHold(sim, 45),
+        sheetTargetDeg: 15,
+        jibTargetDeg: 15,
+        auxOn: false,
+      });
+    }
+
+    const before = sim.telemetry().speedThroughWater;
+    const coastStart = { ...sim.state.pos };
+    let afterFiveSeconds = 0;
+    for (let i = 1; i <= 10 / DT; i++) {
+      sim.step(DT, {
+        tiller: headingHold(sim, 45),
+        sheetTargetDeg: 85,
+        jibTargetDeg: 75,
+        auxOn: false,
+      });
+      if (i === 5 / DT) afterFiveSeconds = sim.telemetry().speedThroughWater;
+    }
+
+    const afterTenSeconds = sim.telemetry().speedThroughWater;
+    const coastDistance = Math.hypot(
+      sim.state.pos.x - coastStart.x,
+      sim.state.pos.y - coastStart.y,
+    );
+    const sails = sim.telemetry().sails;
+    const main = sails.find((sail) => sail.sailId === "main")!;
+    const jib = sails.find((sail) => sail.sailId === "jib")!;
+
+    expect(before).toBeGreaterThan(4.1);
+    expect(afterFiveSeconds).toBeGreaterThan(2.5);
+    expect(afterFiveSeconds).toBeLessThan(2.7);
+    expect(afterTenSeconds).toBeGreaterThan(1.7);
+    expect(afterTenSeconds).toBeLessThan(1.9);
+    expect(coastDistance).toBeGreaterThan(12);
+    expect(main.luffing).toBe(true);
+    expect(jib.luffing).toBe(true);
+  }, 30000);
+
   it("carries light weather helm with useful windward rudder lift", () => {
     const sim = makeConstantSim(12, 0);
     sim.state.heading = 45 * DEG;
@@ -856,28 +903,74 @@ describe("electric auxiliary", () => {
   }, 30000);
 });
 
-describe("MOB marker drift", () => {
-  it("cannot recover until the boat first sails 15 m away", () => {
+describe("MOB drill and marker drift", () => {
+  it("cannot recover until the boat first sails three lengths away", () => {
     const drill = new MobDrill();
-    const stopped = makeSim(0, 0).telemetry();
     drill.drop();
 
-    drill.update(DT, stopped, 0, 0);
+    expect(MOB_ARM_DISTANCE_M).toBeCloseTo(3 * harbor20.loa, 1);
+
+    drill.update(DT, 0, 0, 0);
     expect(drill.status.recovered).toBe(false);
     expect(drill.status.armed).toBe(false);
 
     // Even re-entering the recovery circle cannot score before departure.
-    drill.update(5, stopped, 180, 4);
+    drill.update(5, 180, 4, 0);
     expect(drill.status.recovered).toBe(false);
 
-    drill.update(5, stopped, 180, MOB_ARM_DISTANCE_M);
+    drill.update(5, 180, MOB_ARM_DISTANCE_M, 2);
     expect(drill.status.armed).toBe(true);
     expect(drill.status.recovered).toBe(false);
 
-    drill.update(5, { ...stopped, sog: 0.5 }, 0, 4);
+    drill.update(5, 0, 4, 0.5);
     expect(drill.status.recovered).toBe(true);
     expect(drill.status.result?.timeSec).toBeCloseTo(15 + DT);
     expect(drill.status.result?.closestM).toBe(4);
+  });
+
+  it("judges recovery speed relative to the marker instead of the shore", () => {
+    const carried = makeConstantSim(0, 0);
+    carried.env.current = { x: kn(2), y: 0 };
+    const carriedMob = carried.dropFloat("mob");
+    carried.step(DT, {
+      tiller: 0,
+      sheetTargetDeg: 85,
+      jibTargetDeg: 75,
+      auxOn: false,
+    });
+    const carriedRelativeSpeed = toKn(carried.relativeSpeedTo(carriedMob));
+
+    // Boat and marker can move over the chart at 2 kn yet be stopped relative
+    // to each other because the same current carries both.
+    expect(carried.telemetry().sog).toBeCloseTo(2, 2);
+    expect(carriedRelativeSpeed).toBeLessThan(0.001);
+    const valid = new MobDrill();
+    valid.drop();
+    valid.update(1, 0, MOB_ARM_DISTANCE_M, carriedRelativeSpeed);
+    valid.update(1, 0, 4, carriedRelativeSpeed);
+    expect(valid.status.recovered).toBe(true);
+
+    const opposing = makeConstantSim(0, 0);
+    opposing.env.current = { x: 0, y: -kn(2) };
+    opposing.state.u = kn(2);
+    const opposingMob = opposing.dropFloat("mob");
+    opposing.step(DT, {
+      tiller: 0,
+      sheetTargetDeg: 85,
+      jibTargetDeg: 75,
+      auxOn: false,
+    });
+    const opposingRelativeSpeed = toKn(opposing.relativeSpeedTo(opposingMob));
+
+    // An opposing current can nearly cancel SOG even though the hull is still
+    // passing the marker too fast for a controlled pickup.
+    expect(opposing.telemetry().sog).toBeLessThan(0.05);
+    expect(opposingRelativeSpeed).toBeGreaterThan(1.9);
+    const invalid = new MobDrill();
+    invalid.drop();
+    invalid.update(1, 0, MOB_ARM_DISTANCE_M, opposingRelativeSpeed);
+    invalid.update(1, 0, 4, opposingRelativeSpeed);
+    expect(invalid.status.recovered).toBe(false);
   });
 
   it("keeps marker IDs unique and supports a complete drill clear", () => {
@@ -911,5 +1004,102 @@ describe("MOB marker drift", () => {
     expect(f.pos.x).toBeGreaterThan(17);
     expect(f.pos.x).toBeLessThan(20);
     expect(f.pos.y).toBeLessThan(-5);
+    const windageSpeed = toKn(
+      Math.hypot(f.velocity.x - env.current.x, f.velocity.y - env.current.y),
+    );
+    expect(windageSpeed).toBeGreaterThan(0.2);
+    expect(windageSpeed).toBeLessThan(0.4);
   }, 30000);
+
+  for (const windKn of [6, 12, 16]) {
+    it(`completes a controlled Figure-8 return in ${windKn} kn`, () => {
+      const sim = makeConstantSim(windKn, 0);
+      sim.state.heading = 90 * DEG;
+      sailFor(sim, 120, 90);
+
+      const mob = sim.dropFloat("mob");
+      const drill = new MobDrill();
+      drill.drop();
+      const dropTime = sim.time;
+
+      const advance = (tiller: number, main: number, jib: number) => {
+        sim.step(DT, {
+          tiller,
+          sheetTargetDeg: main,
+          jibTargetDeg: jib,
+          auxOn: false,
+        });
+        const br = sim.bearingAndRange(mob.pos);
+        drill.update(DT, br.bearing, br.distance, toKn(sim.relativeSpeedTo(mob)));
+      };
+
+      // Establish a midpoint departure: 3.5 boat lengths on a beam reach
+      // before beginning the long, no-jibe turn.
+      while (
+        sim.bearingAndRange(mob.pos).distance < 3.5 * harbor20.loa &&
+        sim.time - dropTime < 20
+      ) {
+        const trim = Math.abs(idealBoomAngle(sim.telemetry().awa));
+        advance(headingHold(sim, 90), trim, Math.min(75, Math.max(8, trim)));
+      }
+      const departureRange = sim.bearingAndRange(mob.pos).distance;
+
+      const heldMain = sim.state.sheetDeg;
+      const heldJib = sim.state.jibDeg;
+      let closestToHeadToWind = 180;
+      let deepestTackAwa = 0;
+      while (sim.state.heading / DEG > -150 && sim.time - dropTime < 60) {
+        advance(
+          15 / harbor20.rudder.maxEffectiveAngle,
+          heldMain,
+          heldJib,
+        );
+        const absAwa = Math.abs(sim.telemetry().awa);
+        closestToHeadToWind = Math.min(closestToHeadToWind, absAwa);
+        deepestTackAwa = Math.max(deepestTackAwa, absAwa);
+      }
+      const postTackHeading = sim.telemetry().headingDeg;
+
+      // Release both sheets on the broad reach until the marker bears on a
+      // close-reach return line, then power up only while turning onto it.
+      while (sim.time - dropTime < 90) {
+        const br = sim.bearingAndRange(mob.pos);
+        if (br.bearing >= 300 && br.bearing <= 330 && br.distance > 10) break;
+        advance(headingHold(sim, 195), 85, 75);
+      }
+      const layline = sim.bearingAndRange(mob.pos);
+
+      while (!drill.status.recovered && sim.time - dropTime < 120) {
+        const br = sim.bearingAndRange(mob.pos);
+        const headingError = Math.abs(
+          ((br.bearing - sim.telemetry().headingDeg + 540) % 360) - 180,
+        );
+        const main =
+          headingError > 10 && br.distance > 12
+            ? Math.abs(idealBoomAngle(sim.telemetry().awa))
+            : 85;
+        advance(headingHold(sim, br.bearing), main, 75);
+      }
+
+      const finalRange = sim.bearingAndRange(mob.pos).distance;
+      const finalRelativeSpeed = toKn(sim.relativeSpeedTo(mob));
+      const main = sim
+        .telemetry()
+        .sails.find((sail) => sail.sailId === "main")!;
+
+      expect(departureRange).toBeGreaterThanOrEqual(3.5 * harbor20.loa);
+      expect(drill.status.armed).toBe(true);
+      expect(postTackHeading).toBeGreaterThan(205);
+      expect(postTackHeading).toBeLessThan(220);
+      expect(closestToHeadToWind).toBeLessThan(10);
+      expect(deepestTackAwa).toBeLessThan(175);
+      expect(layline.bearing).toBeGreaterThanOrEqual(300);
+      expect(layline.bearing).toBeLessThanOrEqual(330);
+      expect(drill.status.recovered).toBe(true);
+      expect(finalRange).toBeLessThan(5);
+      expect(finalRelativeSpeed).toBeLessThan(1);
+      expect(main.luffing).toBe(true);
+      expect(sim.time - dropTime).toBeLessThan(120);
+    }, 30000);
+  }
 });

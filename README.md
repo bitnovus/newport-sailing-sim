@@ -63,8 +63,10 @@ and attribution requirements of every configured hosted service.
 The yellow track line persists across page reloads (`localStorage`), so a
 refresh no longer loses your sail history — CLEAR is the intentional reset
 for both the track and MOB drill.
-MOB recovery scoring arms after the boat first separates 15 m from the marker,
-preventing an immediate recovery while stopped at the drop point.
+MOB recovery scoring arms once separation reaches three boat lengths (18.3 m),
+the low end of the Figure-8 beam-reach departure. Recovery requires getting
+within 5 m at less than 1 kn relative to the drifting marker, so harbor current
+cannot create a false pass or failure.
 The tiller slider at screen bottom holds any selected helm angle; CENTER
 returns it to 0°. The jib trim slider holds a separate jib-sheet limit while
 wind pressure self-tends the club boom. Touch/hold mainsheet buttons remain
@@ -158,6 +160,10 @@ and retention, and comply with the selected provider's terms.
   collision grid with `excludeBboxes` until OSM fixes the relation.
 - Depth/bathymetry, spatially-varying current, and tide height are future
   work; current is a uniform vector per harbor.
+- Translational inertia includes a fixed 225 kg three-person training load;
+  individual crew count, position, and movement are not simulated.
+- The MOB marker is a deterministic dan-buoy approximation: uniform current
+  plus 2.5% of true-wind speed directly downwind, without stochastic leeway.
 
 ## Data, sources, and trademarks
 
@@ -171,6 +177,9 @@ Harbor 20 dimensions and equipment references come from the
 [builder's published specifications](https://wdschockcorp.com/harbor-20) and
 the [Harbor 20 Class Association rules](https://www.harbor20.org/about-the-class/organization/bylaws/).
 Physics coefficients and the procedural 3D model are original approximations.
+Figure-8 drill cues follow the
+[US Sailing Safety Briefing Card](https://www.ussailing.org/wp-content/uploads/2025/03/Safety-Briefing-Card-US-Sailing.pdf);
+the simulator's recovery scoring remains an original practice aid.
 
 Harbor 20 and W.D. Schock are used descriptively and may be trademarks of their
 respective owners. This independent project is not affiliated with, sponsored

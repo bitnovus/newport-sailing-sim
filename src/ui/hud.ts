@@ -1,6 +1,7 @@
 import type { Telemetry } from "../core/sim";
 
-export const MOB_ARM_DISTANCE_M = 15;
+/** Three Harbor 20 lengths: the low end of the Figure-8 beam-reach departure. */
+export const MOB_ARM_DISTANCE_M = 18.3;
 
 export interface MobStatus {
   active: boolean;
@@ -9,6 +10,8 @@ export interface MobStatus {
   timeSec: number;
   bearing: number;
   distance: number;
+  /** Boat speed relative to the drifting marker, knots. */
+  relativeSpeed: number;
   recovered: boolean;
   result?: { timeSec: number; closestM: number };
 }
@@ -116,6 +119,7 @@ export class Hud {
       <div class="hud-row"><span class="hud-label">TIME</span><span class="hud-value" data-k="time">0:00</span></div>
       <div class="hud-row"><span class="hud-label">RANGE</span><span class="hud-value" data-k="range">—</span></div>
       <div class="hud-row"><span class="hud-label">BEARING</span><span class="hud-value" data-k="bearing">—</span></div>
+      <div class="hud-row"><span class="hud-label">REL SPEED</span><span class="hud-value" data-k="speed">—</span></div>
       <div class="hud-row"><span class="hud-label">STATUS</span><span class="hud-value" data-k="status">drifting</span></div>`;
     this.root.append(this.mobPanel);
     for (const e of this.mobPanel.querySelectorAll("[data-k]")) {
@@ -179,14 +183,16 @@ export class Hud {
     this.rows["mob-time"].textContent = `${mm}:${String(ss).padStart(2, "0")}`;
     this.rows["mob-range"].textContent = `${fmt(m.distance, 0)} m`;
     this.rows["mob-bearing"].textContent = `${fmt(m.bearing, 0)}° ${bearingLabel(m.bearing)}`;
+    this.rows["mob-speed"].textContent = `${fmt(m.relativeSpeed)} kn`;
     if (m.recovered && m.result) {
       this.rows["mob-status"].textContent = `RECOVERED in ${m.result.timeSec.toFixed(0)}s · closest ${m.result.closestM.toFixed(0)} m`;
       this.mobPanel.classList.add("good");
     } else if (!m.armed) {
-      this.rows["mob-status"].textContent = `SAIL AWAY — arm at ${MOB_ARM_DISTANCE_M} m`;
+      this.rows["mob-status"].textContent = `BEAM REACH — arm at ${MOB_ARM_DISTANCE_M.toFixed(0)} m`;
       this.mobPanel.classList.remove("good");
     } else {
-      this.rows["mob-status"].textContent = m.distance < 30 ? "CLOSE — slow down" : "keep a lookout";
+      this.rows["mob-status"].textContent =
+        m.distance < 30 ? "CLOSE — slow below 1 kn relative" : "keep a lookout";
       this.mobPanel.classList.remove("good");
     }
   }
@@ -206,6 +212,7 @@ export class MobDrill {
     timeSec: 0,
     bearing: 0,
     distance: 0,
+    relativeSpeed: 0,
     recovered: false,
   };
   private closest = Infinity;
@@ -217,6 +224,7 @@ export class MobDrill {
       timeSec: 0,
       bearing: 0,
       distance: 0,
+      relativeSpeed: 0,
       recovered: false,
     };
     this.closest = Infinity;
@@ -229,17 +237,24 @@ export class MobDrill {
       timeSec: 0,
       bearing: 0,
       distance: 0,
+      relativeSpeed: 0,
       recovered: false,
     };
     this.closest = Infinity;
   }
 
-  update(dt: number, tel: Telemetry, bearing: number, distance: number): void {
+  update(
+    dt: number,
+    bearing: number,
+    distance: number,
+    relativeSpeed: number,
+  ): void {
     const s = this.status;
     if (!s.active || s.recovered) return;
     s.timeSec += dt;
     s.bearing = bearing;
     s.distance = distance;
+    s.relativeSpeed = relativeSpeed;
 
     // The marker is dropped at the boat, so recovery must not be possible
     // until the crew has actually sailed away. Start closest-approach scoring
@@ -253,7 +268,7 @@ export class MobDrill {
     }
 
     this.closest = Math.min(this.closest, distance);
-    if (distance < 5 && tel.sog < 1) {
+    if (distance < 5 && relativeSpeed < 1) {
       s.recovered = true;
       s.result = { timeSec: s.timeSec, closestM: this.closest };
     }
