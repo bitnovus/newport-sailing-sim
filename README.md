@@ -181,7 +181,10 @@ by, or endorsed by W.D. Schock Corp. or the Harbor 20 Class Association.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and pull-request guidance. Use
 the private process in [SECURITY.md](SECURITY.md) for vulnerability reports.
 
-Original application code is available under the [MIT License](LICENSE).
-Provider and data-license details are in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Runtime dependency license
-texts are included in every production build as `THIRD_PARTY_LICENSES.txt`.
+Except where otherwise noted, the original application code and documentation
+are licensed under the [MIT License](LICENSE). Harbor data and third-party
+components remain under the licenses and terms described in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the harbor-specific
+[`DATA_LICENSE.md`](src/harbors/newport-harbor/DATA_LICENSE.md); no trademark
+rights are granted. Runtime dependency license texts are included in every
+production build as `THIRD_PARTY_LICENSES.txt`.

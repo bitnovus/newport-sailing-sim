@@ -4,6 +4,7 @@
   --accent: #7fdbff;
   --warn: #ffd166;
   --danger: #ff5a5f;
+  --toolbar-width: 116px;
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
 }
 
@@ -70,9 +71,12 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 }
 
 #toolbar {
-  position: absolute; top: 12px; right: 12px; display: flex; flex-direction: column; gap: 8px;
+  position: absolute; top: 12px; right: 12px; width: var(--toolbar-width);
+  max-height: calc(100vh - 24px); overflow-y: auto; scrollbar-width: thin;
+  display: flex; flex-direction: column; gap: 8px;
 }
 .tool {
+  width: 100%; flex: 0 0 auto;
   background: var(--bg); color: var(--fg); border: 1px solid rgba(127, 219, 255, 0.3);
   border-radius: 8px; padding: 9px 14px; font: inherit; font-size: 12px; letter-spacing: 0.05em;
   cursor: pointer; backdrop-filter: blur(6px);
@@ -85,10 +89,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 .tool.danger:hover { border-color: var(--danger); color: var(--danger); }
 
 .panel {
-  position: absolute; top: 64px; right: 12px; width: 260px;
+  position: absolute; top: 12px; right: calc(var(--toolbar-width) + 24px);
+  width: min(300px, calc(100vw - var(--toolbar-width) - 36px));
   background: var(--bg); color: var(--fg); padding: 12px 16px; border-radius: 10px;
   border: 1px solid rgba(127, 219, 255, 0.25); font-size: 12px;
-  max-height: calc(100vh - 80px); overflow-y: auto;
+  max-height: calc(100vh - 24px); overflow-y: auto;
 }
 .panel-title { font-weight: 700; color: var(--accent); margin-bottom: 8px; letter-spacing: 0.06em; }
 .panel-subtitle { font-weight: 700; color: var(--accent); margin: 12px 0 8px; }
@@ -192,9 +197,18 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 
 .hidden { display: none !important; }
 
+@media (max-width: 1279px) {
+  .panel { max-height: calc(100vh - 215px); }
+}
+
+@media (max-height: 500px) {
+  #toolbar { gap: 4px; }
+  .tool { padding: 6px 10px; }
+}
+
 @media (max-width: 700px) {
   .hud-panel { min-width: 0; }
   .windex { width: 64px; height: 64px; }
-  .panel { width: min(280px, calc(100vw - 24px)); }
+  .panel { width: min(280px, calc(100vw - var(--toolbar-width) - 36px)); }
   .maplibregl-ctrl-attrib { font-size: 9px; line-height: 12px; }
 }

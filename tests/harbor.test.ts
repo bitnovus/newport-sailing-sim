@@ -1,11 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { loadWater } from "../src/harbors/registry";
 
-const { water } = loadWater("newport-harbor");
+const { def, water } = loadWater("newport-harbor");
 
 describe("Newport Harbor collision domain", () => {
-  it("main channel is navigable", () => {
-    expect(water.containsLngLat(-117.903, 33.607)).toBe(true);
+  it("starts in open water near the OCC School of Sailing", () => {
+    const school = water.plane.project(-117.91811, 33.61689);
+    const start = water.plane.project(def.start.lng, def.start.lat);
+
+    expect(Math.hypot(start.x - school.x, start.y - school.y)).toBeLessThan(150);
+    expect(water.containsLngLat(def.start.lng, def.start.lat)).toBe(true);
+
+    // Leave enough room for the boat to spawn clear of the modeled shoreline.
+    for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 4) {
+      const [lng, lat] = water.plane.unproject({
+        x: start.x + Math.cos(angle) * 50,
+        y: start.y + Math.sin(angle) * 50,
+      });
+      expect(water.containsLngLat(lng, lat)).toBe(true);
+    }
   });
 
   it("the entrance channel connects the ocean to the harbor", () => {

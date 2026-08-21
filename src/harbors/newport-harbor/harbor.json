@@ -4,7 +4,7 @@
   "lat0": 33.605,
   "lon0": -117.93,
   "bbox": { "west": -117.945, "south": 33.588, "east": -117.872, "north": 33.628 },
-  "start": { "lng": -117.903, "lat": 33.607, "headingDeg": 290 },
+  "start": { "lng": -117.9184, "lat": 33.61604, "headingDeg": 290 },
   "current": { "x": 0, "y": 0 },
   "marks": [
     { "id": "balboa", "name": "Balboa Pavilion", "lng": -117.9010, "lat": 33.6017, "kind": "white" },
