@@ -2,6 +2,8 @@ import type { Telemetry } from "../core/sim";
 
 /** Three Harbor 20 lengths: the low end of the Figure-8 beam-reach departure. */
 export const MOB_ARM_DISTANCE_M = 18.3;
+/** Close enough to put the marker alongside for a simulated pickup. */
+export const MOB_RECOVERY_DISTANCE_M = 1;
 
 export interface MobStatus {
   active: boolean;
@@ -185,14 +187,16 @@ export class Hud {
     this.rows["mob-bearing"].textContent = `${fmt(m.bearing, 0)}° ${bearingLabel(m.bearing)}`;
     this.rows["mob-speed"].textContent = `${fmt(m.relativeSpeed)} kn`;
     if (m.recovered && m.result) {
-      this.rows["mob-status"].textContent = `RECOVERED in ${m.result.timeSec.toFixed(0)}s · closest ${m.result.closestM.toFixed(0)} m`;
+      this.rows["mob-status"].textContent = `RECOVERED in ${m.result.timeSec.toFixed(0)}s · closest ${m.result.closestM.toFixed(1)} m`;
       this.mobPanel.classList.add("good");
     } else if (!m.armed) {
       this.rows["mob-status"].textContent = `BEAM REACH — arm at ${MOB_ARM_DISTANCE_M.toFixed(0)} m`;
       this.mobPanel.classList.remove("good");
     } else {
       this.rows["mob-status"].textContent =
-        m.distance < 30 ? "CLOSE — slow below 1 kn relative" : "keep a lookout";
+        m.distance < 30
+          ? `PICKUP — within ${MOB_RECOVERY_DISTANCE_M.toFixed(0)} m · below 1 kn relative`
+          : "keep a lookout";
       this.mobPanel.classList.remove("good");
     }
   }
@@ -268,7 +272,7 @@ export class MobDrill {
     }
 
     this.closest = Math.min(this.closest, distance);
-    if (distance < 5 && relativeSpeed < 1) {
+    if (distance <= MOB_RECOVERY_DISTANCE_M && relativeSpeed < 1) {
       s.recovered = true;
       s.result = { timeSec: s.timeSec, closestM: this.closest };
     }

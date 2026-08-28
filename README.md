@@ -65,7 +65,7 @@ refresh no longer loses your sail history — CLEAR is the intentional reset
 for both the track and MOB drill.
 MOB recovery scoring arms once separation reaches three boat lengths (18.3 m),
 the low end of the Figure-8 beam-reach departure. Recovery requires getting
-within 5 m at less than 1 kn relative to the drifting marker, so harbor current
+within 1 m at less than 1 kn relative to the drifting marker, so harbor current
 cannot create a false pass or failure.
 The tiller slider at screen bottom holds any selected helm angle; CENTER
 returns it to 0°. The jib trim slider holds a separate jib-sheet limit while
@@ -166,6 +166,10 @@ and retention, and comply with the selected provider's terms.
   work; current is a uniform vector per harbor.
 - Translational inertia includes a fixed 225 kg three-person training load;
   individual crew count, position, and movement are not simulated.
+- Maneuvering is a planar surge/sway/yaw approximation. Added-water effects
+  are folded into the effective yaw inertia and calibrated force/damping
+  coefficients rather than an explicit six-degree-of-freedom added-mass
+  matrix; wave radiation, slamming, and crew-weight shifts are not modeled.
 - The MOB marker is a deterministic dan-buoy approximation: uniform current
   plus 2.5% of true-wind speed directly downwind, without stochastic leeway.
 

@@ -8,6 +8,7 @@ import {
   hullDrag,
   keelForces,
   rudderForces,
+  yawDamping,
 } from "../src/core/physics/hydro";
 import {
   downwindExposure,
@@ -20,7 +21,11 @@ import {
   stepSheetedBoom,
   stepWingedBoom,
 } from "../src/core/physics/sails";
-import { MobDrill, MOB_ARM_DISTANCE_M } from "../src/ui/hud";
+import {
+  MobDrill,
+  MOB_ARM_DISTANCE_M,
+  MOB_RECOVERY_DISTANCE_M,
+} from "../src/ui/hud";
 import { apparentWind, closeHauledHeading } from "../src/core/physics/wind";
 
 const DT = 1 / 60;
@@ -430,6 +435,50 @@ describe("sail aerodynamics", () => {
     expect(rudderPower).toBeLessThan(0);
   });
 
+  it("keeps hydrodynamic edge states finite, mirrored, and passive", () => {
+    for (const u of [-0.5, 0, 1e-7, 0.25, 2, 8]) {
+      for (const v of [-3, -0.4, 0, 0.4, 3]) {
+        for (const r of [-0.8, -0.2, 0, 0.2, 0.8]) {
+          const keel = keelForces(harbor20, u, v, r);
+          const mirroredKeel = keelForces(harbor20, u, -v, -r);
+          const keelPower =
+            keel.surge * u + keel.side * v + keel.yaw * r;
+          const dampingPower = yawDamping(harbor20, u, r) * r;
+
+          expect(Object.values(keel).every(Number.isFinite)).toBe(true);
+          expect(keelPower).toBeLessThanOrEqual(1e-7);
+          expect(dampingPower).toBeLessThanOrEqual(0);
+          expect(mirroredKeel.surge).toBeCloseTo(keel.surge, 8);
+          expect(mirroredKeel.side).toBeCloseTo(-keel.side, 8);
+          expect(mirroredKeel.yaw).toBeCloseTo(-keel.yaw, 8);
+
+          for (const delta of [-35, -15, 0, 15, 35]) {
+            const rudder = rudderForces(harbor20, u, delta, v, r);
+            const mirroredRudder = rudderForces(
+              harbor20,
+              u,
+              -delta,
+              -v,
+              -r,
+            );
+            const rudderPower =
+              rudder.surge * u + rudder.side * v + rudder.yaw * r;
+
+            expect(Object.values(rudder).every(Number.isFinite)).toBe(true);
+            expect(rudderPower).toBeLessThanOrEqual(1e-7);
+            expect(mirroredRudder.surge).toBeCloseTo(rudder.surge, 8);
+            expect(mirroredRudder.side).toBeCloseTo(-rudder.side, 8);
+            expect(mirroredRudder.yaw).toBeCloseTo(-rudder.yaw, 8);
+            expect(mirroredRudder.angleOfAttackDeg).toBeCloseTo(
+              -rudder.angleOfAttackDeg,
+              8,
+            );
+          }
+        }
+      }
+    }
+  });
+
   it("uses stern yaw inflow to unload and damp the rudder", () => {
     const straight = rudderForces(harbor20, 2, 20, 0, 0);
     const turning = rudderForces(harbor20, 2, 20, 0, 0.2);
@@ -484,6 +533,16 @@ describe("sail aerodynamics", () => {
     expect(sailCoefficients(18).cl).toBeCloseTo(1.55, 6);
     expect(sailCoefficients(45).cl).toBeLessThan(1.0);
     expect(sailCoefficients(90).cd).toBeGreaterThan(1.0);
+  });
+
+  it("keeps the piecewise sail-force curve continuous", () => {
+    const epsilon = 1e-6;
+    for (const boundary of [0, 6, 18, 50, 90, 180]) {
+      const below = sailCoefficients(boundary - epsilon);
+      const above = sailCoefficients(boundary + epsilon);
+      expect(Math.abs(above.cl - below.cl)).toBeLessThan(1e-4);
+      expect(Math.abs(above.cd - below.cd)).toBeLessThan(1e-4);
+    }
   });
 
   it("eases the ideal boom monotonically from close-hauled to running", () => {
@@ -690,6 +749,233 @@ describe("dynamic behavior", () => {
     const expectedAccelerationRatio =
       (harbor20.mass + harbor20.crewMass) / harbor20.mass;
     expect(light.state.u / loaded.state.u).toBeCloseTo(expectedAccelerationRatio, 8);
+  });
+
+  it("scales angular acceleration inversely with yaw inertia", () => {
+    const makeTurningSim = (yawInertia: number) => {
+      const env = new Environment({
+        speed: 0,
+        directionFrom: 0,
+        gust: 0,
+        source: "test",
+      });
+      env.windAt = () => ({ speed: 0, directionFrom: 0 });
+      const sim = new Sim({ ...harbor20, yawInertia }, env, null);
+      sim.state.u = kn(4);
+      return sim;
+    };
+    const regular = makeTurningSim(harbor20.yawInertia);
+    const doubled = makeTurningSim(harbor20.yawInertia * 2);
+    const inputs = {
+      tiller: -1,
+      sheetTargetDeg: 85,
+      jibTargetDeg: 75,
+      auxOn: false,
+    };
+
+    regular.step(DT, inputs);
+    doubled.step(DT, inputs);
+
+    expect(regular.state.r / doubled.state.r).toBeCloseTo(2, 8);
+    expect(regular.state.u).toBeCloseTo(doubled.state.u, 8);
+    expect(regular.state.v).toBeCloseTo(doubled.state.v, 8);
+  });
+
+  it("does not turn a 1 kn hard-over entry into an instant stop", () => {
+    const sim = makeConstantSim(0, 0);
+    sim.state.u = kn(1);
+    let maxSpeedStep = 0;
+    let previousSpeed = sim.telemetry().speedThroughWater;
+
+    for (let i = 0; i < 1 / DT; i++) {
+      sim.step(DT, {
+        tiller: -1,
+        sheetTargetDeg: 85,
+        jibTargetDeg: 75,
+        auxOn: false,
+      });
+      const speed = sim.telemetry().speedThroughWater;
+      maxSpeedStep = Math.max(maxSpeedStep, Math.abs(speed - previousSpeed));
+      previousSpeed = speed;
+    }
+
+    expect(sim.telemetry().speedThroughWater).toBeGreaterThan(0.8);
+    expect(maxSpeedStep).toBeLessThan(0.01);
+    expect(sim.state.r).toBeGreaterThan(0);
+  });
+
+  it("keeps passive planar kinetic energy monotonic in calm water", () => {
+    const env = new Environment({
+      speed: 0,
+      directionFrom: 0,
+      gust: 0,
+      source: "test",
+    });
+    env.windAt = () => ({ speed: 0, directionFrom: 0 });
+    const sim = new Sim({ ...harbor20, sails: [] }, env, null);
+    const mass = harbor20.mass + harbor20.crewMass;
+    sim.state.u = kn(4);
+    sim.state.v = 0.6;
+    sim.state.r = 0.25;
+    const energy = () =>
+      0.5 * mass * (sim.state.u ** 2 + sim.state.v ** 2) +
+      0.5 * harbor20.yawInertia * sim.state.r ** 2;
+    const initialEnergy = energy();
+    let previousEnergy = initialEnergy;
+
+    for (let i = 0; i < 10 / DT; i++) {
+      sim.step(DT, {
+        tiller: 0,
+        sheetTargetDeg: 85,
+        jibTargetDeg: 75,
+        auxOn: false,
+      });
+      const currentEnergy = energy();
+      expect(currentEnergy).toBeLessThanOrEqual(previousEnergy + 1e-6);
+      previousEnergy = currentEnergy;
+    }
+
+    expect(previousEnergy).toBeLessThan(initialEnergy * 0.6);
+  });
+
+  it("mirrors hard-over turns and converges from 30 to 120 Hz", () => {
+    const run = (dt: number, tiller: number) => {
+      const sim = makeConstantSim(0, 0);
+      sim.state.u = kn(4);
+      let pivotAtHalfSecond = 0;
+      let maxSpeedStep = 0;
+      let previousSpeed = sim.telemetry().speedThroughWater;
+
+      for (let i = 1; i <= 4 / dt; i++) {
+        sim.step(dt, {
+          tiller,
+          sheetTargetDeg: 85,
+          jibTargetDeg: 75,
+          auxOn: false,
+        });
+        const speed = sim.telemetry().speedThroughWater;
+        maxSpeedStep = Math.max(maxSpeedStep, Math.abs(speed - previousSpeed));
+        previousSpeed = speed;
+        if (i === Math.round(0.5 / dt)) {
+          pivotAtHalfSecond = -sim.state.v / sim.state.r;
+        }
+      }
+
+      return {
+        headingDeg: sim.state.heading / DEG,
+        speed: sim.telemetry().speedThroughWater,
+        u: sim.state.u,
+        v: sim.state.v,
+        r: sim.state.r,
+        pivotAtHalfSecond,
+        maxSpeedStep,
+      };
+    };
+
+    const starboard = run(DT, -1);
+    const port = run(DT, 1);
+    const coarse = run(1 / 30, -1);
+    const fine = run(1 / 120, -1);
+
+    expect(port.headingDeg).toBeCloseTo(-starboard.headingDeg, 8);
+    expect(port.speed).toBeCloseTo(starboard.speed, 8);
+    expect(port.u).toBeCloseTo(starboard.u, 8);
+    expect(port.v).toBeCloseTo(-starboard.v, 8);
+    expect(port.r).toBeCloseTo(-starboard.r, 8);
+    expect(port.pivotAtHalfSecond).toBeCloseTo(
+      starboard.pivotAtHalfSecond,
+      8,
+    );
+
+    expect(Math.abs(coarse.headingDeg - fine.headingDeg)).toBeLessThan(1);
+    expect(coarse.speed).toBeCloseTo(fine.speed, 1);
+    expect(coarse.pivotAtHalfSecond).toBeCloseTo(
+      fine.pivotAtHalfSecond,
+      0,
+    );
+    expect(coarse.maxSpeedStep).toBeLessThan(0.1);
+  });
+
+  it("moves the turn pivot forward without inventing keel braking", () => {
+    const run = (keelArm: number) => {
+      const env = new Environment({
+        speed: 0,
+        directionFrom: 0,
+        gust: 0,
+        source: "test",
+      });
+      env.windAt = () => ({ speed: 0, directionFrom: 0 });
+      const sim = new Sim({ ...harbor20, keelArm, sails: [] }, env, null);
+      sim.state.u = kn(4);
+
+      for (let i = 0; i < 0.5 / DT; i++) {
+        sim.step(DT, {
+          tiller: -1,
+          sheetTargetDeg: 85,
+          jibTargetDeg: 75,
+          auxOn: false,
+        });
+      }
+
+      return {
+        pivot: -sim.state.v / sim.state.r,
+        radius: Math.hypot(sim.state.u, sim.state.v) / Math.abs(sim.state.r),
+        speed: sim.telemetry().speedThroughWater,
+      };
+    };
+
+    const centered = run(0);
+    const forward = run(harbor20.keelArm);
+
+    expect(forward.pivot).toBeGreaterThan(centered.pivot + 0.05);
+    expect(forward.radius).toBeLessThan(centered.radius);
+    expect(forward.speed).toBeCloseTo(centered.speed, 2);
+  });
+
+  it("carries then dissipates yaw in a rudder pull-out", () => {
+    const env = new Environment({
+      speed: 0,
+      directionFrom: 0,
+      gust: 0,
+      source: "test",
+    });
+    env.windAt = () => ({ speed: 0, directionFrom: 0 });
+    const sim = new Sim({ ...harbor20, sails: [] }, env, null);
+    sim.state.u = kn(4);
+    const inputs = {
+      sheetTargetDeg: 85,
+      jibTargetDeg: 75,
+      auxOn: false,
+    };
+
+    for (let i = 0; i < 2 / DT; i++) {
+      sim.step(DT, { ...inputs, tiller: -1 });
+    }
+    expect(sim.state.r).toBeGreaterThan(0.3);
+
+    let centeredAt: number | null = null;
+    let yawAtCenter = 0;
+    let headingAtCenter = 0;
+    let previousYaw = Infinity;
+    for (let i = 1; i <= 6 / DT; i++) {
+      sim.step(DT, { ...inputs, tiller: 0 });
+      if (centeredAt === null && Math.abs(sim.state.rudderDeg) < 1e-9) {
+        centeredAt = i * DT;
+        yawAtCenter = sim.state.r;
+        headingAtCenter = sim.state.heading;
+        previousYaw = Math.abs(sim.state.r);
+      } else if (centeredAt !== null) {
+        expect(Math.abs(sim.state.r)).toBeLessThanOrEqual(previousYaw + 1e-9);
+        previousYaw = Math.abs(sim.state.r);
+      }
+    }
+
+    expect(centeredAt).not.toBeNull();
+    expect(centeredAt!).toBeLessThan(0.5);
+    expect(yawAtCenter).toBeGreaterThan(0.25);
+    expect(sim.state.r).toBeGreaterThan(0);
+    expect(sim.state.r).toBeLessThan(yawAtCenter * 0.05);
+    expect((sim.state.heading - headingAtCenter) / DEG).toBeGreaterThan(15);
   });
 
   it("retains way and pivots forward in a 4 kn hard-over tack", () => {
@@ -1122,17 +1408,20 @@ describe("MOB drill and marker drift", () => {
     expect(drill.status.armed).toBe(false);
 
     // Even re-entering the recovery circle cannot score before departure.
-    drill.update(5, 180, 4, 0);
+    drill.update(5, 180, 0.5, 0);
     expect(drill.status.recovered).toBe(false);
 
     drill.update(5, 180, MOB_ARM_DISTANCE_M, 2);
     expect(drill.status.armed).toBe(true);
     expect(drill.status.recovered).toBe(false);
 
-    drill.update(5, 0, 4, 0.5);
+    drill.update(5, 0, MOB_RECOVERY_DISTANCE_M + 0.01, 0.5);
+    expect(drill.status.recovered).toBe(false);
+
+    drill.update(5, 0, MOB_RECOVERY_DISTANCE_M, 0.5);
     expect(drill.status.recovered).toBe(true);
-    expect(drill.status.result?.timeSec).toBeCloseTo(15 + DT);
-    expect(drill.status.result?.closestM).toBe(4);
+    expect(drill.status.result?.timeSec).toBeCloseTo(20 + DT);
+    expect(drill.status.result?.closestM).toBe(MOB_RECOVERY_DISTANCE_M);
   });
 
   it("judges recovery speed relative to the marker instead of the shore", () => {
@@ -1154,7 +1443,7 @@ describe("MOB drill and marker drift", () => {
     const valid = new MobDrill();
     valid.drop();
     valid.update(1, 0, MOB_ARM_DISTANCE_M, carriedRelativeSpeed);
-    valid.update(1, 0, 4, carriedRelativeSpeed);
+    valid.update(1, 0, 0.5, carriedRelativeSpeed);
     expect(valid.status.recovered).toBe(true);
 
     const opposing = makeConstantSim(0, 0);
@@ -1176,7 +1465,7 @@ describe("MOB drill and marker drift", () => {
     const invalid = new MobDrill();
     invalid.drop();
     invalid.update(1, 0, MOB_ARM_DISTANCE_M, opposingRelativeSpeed);
-    invalid.update(1, 0, 4, opposingRelativeSpeed);
+    invalid.update(1, 0, 0.5, opposingRelativeSpeed);
     expect(invalid.status.recovered).toBe(false);
   });
 
@@ -1292,24 +1581,29 @@ describe("MOB drill and marker drift", () => {
         .sails.reduce((sum, sail) => sum + sail.side, 0);
 
       // Release both sheets on the broad reach until the marker bears on a
-      // close-reach return line, then power up only while turning onto it.
+      // close-reach return line, then stay depowered to slow for pickup.
       while (sim.time - dropTime < 90) {
         const br = sim.bearingAndRange(mob.pos);
         if (br.bearing >= 30 && br.bearing <= 60 && br.distance > 10) break;
         advance(headingHold(sim, portBroadReach), 85, 75);
       }
       const layline = sim.bearingAndRange(mob.pos);
+      const laylineAwa = sim.telemetry().awa;
 
-      while (!drill.status.recovered && sim.time - dropTime < 120) {
+      while (!drill.status.recovered && sim.time - dropTime < 150) {
         const br = sim.bearingAndRange(mob.pos);
-        const headingError = Math.abs(
-          ((br.bearing - sim.telemetry().headingDeg + 540) % 360) - 180,
-        );
+        // Lead the drifting marker slightly in stronger wind. The low-speed
+        // rudder otherwise falls behind its downwind motion near the pickup.
+        const windageLead =
+          br.distance < 8 ? Math.max(0, (sim.telemetry().tws - 8) * 2) : 0;
+        const relativeSpeed = toKn(sim.relativeSpeedTo(mob));
+        // In light air, briefly retrim only if the boat has nearly stopped
+        // outside the pickup circle; ease again before relative speed builds.
         const main =
-          headingError > 10 && br.distance > 12
+          br.distance > MOB_RECOVERY_DISTANCE_M && relativeSpeed < 0.35
             ? Math.abs(idealBoomAngle(sim.telemetry().awa))
             : 85;
-        advance(headingHold(sim, br.bearing), main, 75);
+        advance(headingHold(sim, br.bearing + windageLead), main, 75);
       }
 
       const finalRange = sim.bearingAndRange(mob.pos).distance;
@@ -1334,15 +1628,15 @@ describe("MOB drill and marker drift", () => {
       expect(deepestTackAwa).toBeLessThan(175);
       expect(minimumTackSpeed).toBeGreaterThan(0.3);
       expect(maxSpeedStep).toBeLessThan(0.1);
-      expect(sim.telemetry().awa).toBeLessThan(0);
+      expect(laylineAwa).toBeLessThan(0);
       expect(postTackSide).toBeGreaterThan(0);
       expect(layline.bearing).toBeGreaterThanOrEqual(30);
       expect(layline.bearing).toBeLessThanOrEqual(60);
       expect(drill.status.recovered).toBe(true);
-      expect(finalRange).toBeLessThan(5);
+      expect(finalRange).toBeLessThanOrEqual(MOB_RECOVERY_DISTANCE_M);
       expect(finalRelativeSpeed).toBeLessThan(1);
       expect(main.luffing).toBe(true);
-      expect(sim.time - dropTime).toBeLessThan(120);
+      expect(sim.time - dropTime).toBeLessThan(150);
     }, 30000);
   }
 });

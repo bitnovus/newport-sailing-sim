@@ -48,8 +48,10 @@ export function sailCoefficients(alphaDeg: number): { cl: number; cd: number } {
   }
   const a = alphaDeg;
   if (a < 6) {
-    // luffing: no meaningful lift, flutter drag
-    return { cl: 0, cd: 0.05 + 0.1 * (a / 6) };
+    // Luffing: no meaningful lift and only modest flutter drag. Join the
+    // attached-flow curve continuously at 6° so reattachment cannot create
+    // an artificial force step.
+    return { cl: 0, cd: 0.05 + 0.01 * (a / 6) };
   }
   if (a <= 18) {
     // attached flow: steep lift ramp to max at ~18°
