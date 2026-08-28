@@ -15,8 +15,7 @@ import {
   auxiliaryThrust,
   hullDrag,
   heelStep,
-  lateralDamping,
-  leewayDrag,
+  keelForces,
   rudderForces,
   yawDamping,
 } from "./physics/hydro";
@@ -316,8 +315,8 @@ export class Sim {
 
     // ---- hydro forces ----
     const drag = hullDrag(b, s.u);
-    const lwDrag = leewayDrag(s.u, s.v);
-    const rudder = rudderForces(b, s.u, s.rudderDeg);
+    const keel = keelForces(b, s.u, s.v, s.r);
+    const rudder = rudderForces(b, s.u, s.rudderDeg, s.v, s.r);
     const aux = s.auxOn ? auxiliaryThrust(b, s.u) : 0;
     const translationalMass = b.mass + b.crewMass;
 
@@ -327,28 +326,30 @@ export class Sim {
     const heelYaw = -900 * Math.sin(s.heel) * (Math.max(0, s.u) / 3);
 
     // ---- surge: explicit (drag wall keeps u tame) ----
-    const fx = rig.total.drive + aux + rudder.drag - drag + lwDrag;
+    const fx = rig.total.drive + aux + rudder.surge + keel.surge - drag;
     s.u = Math.max(-0.5, Math.min(8, s.u + (fx / translationalMass + s.v * s.r) * dt));
 
     // ---- sway: semi-implicit quadratic solve (explicit diverges at 60 Hz) ----
-    // m·(v − v0)/dt = side − k·v − c·v·|v|, Newton from v0
-    const { k, c } = lateralDamping(b, s.u);
-    const totalSide = rig.total.side + rudder.side;
+    // Keel lift is already in totalSide; solve the remaining hull crossflow
+    // relation m·(v − v0)/dt = side − c·v·|v| with Newton iterations.
+    const c = b.hullLateralDrag;
+    const totalSide = rig.total.side + rudder.side + keel.side;
     let nv = s.v + ((totalSide / translationalMass) * dt - s.u * s.r * dt) * 0.5;
     for (let i = 0; i < 4; i++) {
-      const R = k * nv + c * nv * Math.abs(nv);
+      const R = c * nv * Math.abs(nv);
       const F =
         (translationalMass * (nv - s.v)) / dt -
         totalSide +
         R +
         translationalMass * s.u * s.r;
-      const dR = k + 2 * c * Math.abs(nv);
+      const dR = 2 * c * Math.abs(nv);
       nv -= F / (translationalMass / dt + dR);
     }
     s.v = Math.max(-3, Math.min(3, nv));
 
     // ---- yaw ----
-    const yawMoment = rig.total.yaw + rudder.yaw + yawDamping(s.u, s.r) + heelYaw;
+    const yawMoment =
+      rig.total.yaw + keel.yaw + rudder.yaw + yawDamping(b, s.u, s.r) + heelYaw;
     s.r += (yawMoment / b.yawInertia) * dt;
     s.r = clamp(s.r, -0.8, 0.8);
     s.heading += s.r * dt;

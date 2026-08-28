@@ -11,6 +11,7 @@ import { Hud, MobDrill } from "./ui/hud";
 import { ManualWind, OpenMeteoWind } from "./providers/open-meteo";
 import { DEG, kn, toKn } from "./core/units";
 import { appConfig } from "./config";
+import { closeHauledHeading } from "./core/physics/wind";
 
 const HARBOR_ID = "newport-harbor";
 const BOAT_ID = "harbor20";
@@ -33,9 +34,9 @@ if (appConfig.liveWindEnabled) live.start();
 const env = new Environment(manual.current());
 env.current = { x: def.current.x, y: def.current.y };
 
-/** Close-hauled heading on port tack for the wind the provider is reporting. */
+/** Close-hauled heading on starboard tack for the reported wind. */
 const sailableHeading = (twdDeg: number): number =>
-  (twdDeg + boat.closeHauledTwa + 360) % 360;
+  closeHauledHeading(twdDeg, boat.closeHauledTwa, "starboard");
 
 const sim = new Sim(boat, env, water);
 const startPos = water.plane.project(def.start.lng, def.start.lat);

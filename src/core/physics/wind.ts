@@ -52,3 +52,17 @@ export function apparentWind(
 
 export const twaOf = (tw: TrueWind, heading: number): number =>
   wrapDeg(tw.directionFrom - heading / DEG);
+
+/**
+ * Compass heading for a close-hauled course on the requested tack.
+ * A starboard tack has the wind arriving from starboard (positive TWA), so
+ * its heading lies counter-clockwise from the meteorological wind direction.
+ */
+export function closeHauledHeading(
+  directionFromDeg: number,
+  closeHauledTwaDeg: number,
+  tack: "starboard" | "port",
+): number {
+  const signedTwa = tack === "starboard" ? closeHauledTwaDeg : -closeHauledTwaDeg;
+  return (directionFromDeg - signedTwa + 360) % 360;
+}

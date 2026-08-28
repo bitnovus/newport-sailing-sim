@@ -27,22 +27,35 @@ export const harbor20: BoatDefinition = {
   // Representative three-person training load at 75 kg each. Keep this
   // separate so the published class-ready weight remains independently testable.
   crewMass: 225,
-  // Slender-hull estimate is ~2,740 kg·m²; the keel and end structure carry
-  // enough mass fore/aft that the boat should retain turn momentum in a tack.
-  yawInertia: 2800,
+  // The dry-mass estimate is ~2,740 kg·m². The effective maneuvering value
+  // also includes water accelerated by the hull, keel, and rudder in yaw.
+  yawInertia: 5200,
   wettedArea: 13,
   hullSpeed: 2.86, // 5.6 kn
-  dragC1: 27,
+  dragC1: 30,
   dragC2: 13,
   dragC3: 77,
   lateralResistance: 1600,
+  // Crew and batteries place the loaded CG slightly abaft the keel/canoe-body
+  // center of pressure. This is a modest CLR lever, not the apparent pivot
+  // point itself (which emerges farther forward once sway and yaw couple).
+  keelArm: 0.6,
   maxEffectiveLeeway: 10,
   hullLateralDrag: 3600,
+  yawDampingLinear: 300,
+  yawDampingQuadratic: 645,
   rightingMomentPerDeg: 170,
   rudder: {
     area: 0.28,
-    maxEffectiveAngle: 35, // real hard-over; past ~40° the blade is a brake
+    // Preserve real 35° hard-over travel. Harbor 20 handling guidance treats
+    // roughly 12.5° as the useful limit; larger angles increasingly brake as
+    // the blade stalls, which is modeled in rudderForces().
+    maxEffectiveAngle: 35,
     arm: 2.1,
+    // The rudder works in the keel/canoe-body wake, which straightens much of
+    // the transverse inflow before it reaches the blade.
+    leewayInflow: 0.35,
+    yawInflow: 0.6,
     rateLimit: 90,
   },
   sails: [

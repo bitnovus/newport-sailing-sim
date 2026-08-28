@@ -1,12 +1,12 @@
 /**
  * Tack comparison at different rudder travel limits. Sails close-hauled on
- * port, then pushes the tiller over and traces heading, speed, and the
+ * starboard, then pushes the tiller over and traces heading, speed, and the
  * hydrodynamic forces through the maneuver.
  */
 import { Sim } from "../src/core/sim";
 import { Environment } from "../src/core/environment";
 import { harbor20 } from "../src/boats/harbor20";
-import { kn } from "../src/core/units";
+import { DEG, kn } from "../src/core/units";
 import { idealBoomAngle } from "../src/core/physics/sails";
 import { rudderForces, hullDrag } from "../src/core/physics/hydro";
 
@@ -21,7 +21,7 @@ function runTack(maxDeg: number): void {
   const boat = { ...harbor20, rudder: { ...harbor20.rudder, maxEffectiveAngle: maxDeg } };
   const env = new Environment({ speed: kn(12), directionFrom: 0, gust: kn(12) * 1.1, source: "dbg" });
   const sim = new Sim(boat, env, null);
-  sim.state.heading = (315 * Math.PI) / 180; // close-hauled, port tack
+  sim.state.heading = (315 * Math.PI) / 180; // close-hauled, starboard tack
 
   // settle on the wind first
   let sheet = 25;
@@ -42,22 +42,41 @@ function runTack(maxDeg: number): void {
 
   const t0 = sim.telemetry();
   console.log(`\n=== rudder max ${maxDeg}° — entering tack at ${t0.sog.toFixed(2)} kn ===`);
-  console.log("  t     hdg    sog   rudderDrag  hullDrag   drive");
+  console.log("  t     hdg    sog   rudderSurge hullDrag   drive   rudderAoA");
+  let clearedNoGoAt: number | null = null;
+  let minSog = t0.sog;
   for (let i = 0; i < 10 / DT; i++) {
     sim.step(DT, { tiller: -0.7, sheetTargetDeg: 10, jibTargetDeg: 15, auxOn: false });
+    minSog = Math.min(minSog, sim.telemetry().sog);
+    if (clearedNoGoAt === null && sim.state.heading / DEG >= 395) {
+      clearedNoGoAt = i * DT;
+    }
     if (i % (0.5 / DT) === 0) {
       const t = sim.telemetry();
-      const rf = rudderForces(boat, sim.state.u, sim.state.rudderDeg);
+      const rf = rudderForces(
+        boat,
+        sim.state.u,
+        sim.state.rudderDeg,
+        sim.state.v,
+        sim.state.r,
+      );
       const drive = t.sails.reduce((sum, s) => sum + s.drive, 0);
       console.log(
         `${(i * DT).toFixed(1).padStart(4)} ${(t.headingDeg.toFixed(0)).padStart(6)}° ${(t.sog.toFixed(2)).padStart(6)} ` +
-          `${(-rf.drag).toFixed(0).padStart(9)} N ${hullDrag(boat, sim.state.u).toFixed(0).padStart(8)} N ${drive.toFixed(0).padStart(7)} N`,
+          `${rf.surge.toFixed(0).padStart(9)} N ${hullDrag(boat, sim.state.u).toFixed(0).padStart(8)} N ${drive.toFixed(0).padStart(7)} N ` +
+          `${rf.angleOfAttackDeg.toFixed(1).padStart(8)}°`,
       );
     }
   }
   const tEnd = sim.telemetry();
-  const cleared = tEnd.headingDeg > 20 && tEnd.headingDeg < 80;
-  console.log(`→ final hdg ${tEnd.headingDeg.toFixed(0)}° sog ${tEnd.sog.toFixed(2)} kn — ${cleared ? "COMPLETED tack" : "STALLED in irons"}`);
+  const result =
+    clearedNoGoAt === null
+      ? "STALLED before clearing no-go"
+      : `CLEARED no-go at ${clearedNoGoAt.toFixed(1)} s`;
+  console.log(
+    `→ final hdg ${tEnd.headingDeg.toFixed(0)}° sog ${tEnd.sog.toFixed(2)} kn; ` +
+      `minimum ${minSog.toFixed(2)} kn — ${result}`,
+  );
 }
 
 for (const max of [25, 35, 60]) runTack(max);

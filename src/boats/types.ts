@@ -72,10 +72,20 @@ export interface BoatDefinition {
   dragC3: number;
   /** Keel + hull lateral resistance coefficient (leeway): F_lat = kLat * u * v. */
   lateralResistance: number;
+  /**
+   * Longitudinal center of the keel/canoe-body lateral force relative to the
+   * loaded center of mass (m, + = forward). This lever converts keel side
+   * force into the yaw moment that establishes the boat's turning pivot.
+   */
+  keelArm: number;
   /** Max leeway the keel produces lift through before sideslip dominates (deg). */
   maxEffectiveLeeway: number;
   /** Hull form drag against beam drift (quadratic): F = c * v * |v|. */
   hullLateralDrag: number;
+  /** Forward-flow contribution to hull yaw damping, N·m per (m/s·rad/s). */
+  yawDampingLinear: number;
+  /** Rotational crossflow contribution to yaw damping, N·m per (rad/s)². */
+  yawDampingQuadratic: number;
   /** Righting moment per degree of heel, N·m. */
   rightingMomentPerDeg: number;
   /** Rudder: area m², effective max lift angle (deg), moment arm (m). */
@@ -83,6 +93,10 @@ export interface BoatDefinition {
     area: number;
     maxEffectiveAngle: number;
     arm: number;
+    /** Fraction of steady leeway flow remaining behind the keel (0..1). */
+    leewayInflow: number;
+    /** Fraction of stern rotational crossflow reaching the rudder (0..1). */
+    yawInflow: number;
     /** How fast the rudder follows the tiller, deg/s. */
     rateLimit: number;
   };

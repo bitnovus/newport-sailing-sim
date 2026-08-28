@@ -112,8 +112,12 @@ scripts/
   club-boom winger can hold the reverse face to weather for wing-and-wing. It
   also retains a modest efficiency penalty at the sheeting extremes.
 - Hull drag has the classic wave-making knee at hull speed (5.6 kn for the
-  H20); keel leeway needs flow (no steerage way / no leeway resistance when
-  stopped); sway is solved semi-implicitly for numerical stability at 60 Hz.
+  H20). Keel lift acts at a configured center of lateral resistance using the
+  local sway-plus-yaw flow, so its side force creates a real yaw moment and a
+  forward turning pivot. Rudder inflow likewise includes leeway, stern sweep,
+  and keel-wake straightening; foil lift redirects energy while profile,
+  induced, hull-crossflow, and yaw drag dissipate it. Sway is solved
+  semi-implicitly for numerical stability at 60 Hz.
 - The electric auxiliary uses a static-thrust cap plus a constant-power
   propeller curve, calibrated to about 5 kn in calm water with unloaded sails.
 - Realistic no-go zone (~35°), tacking angles (~45°), heel-to-leeward with

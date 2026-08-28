@@ -3,7 +3,12 @@ import { JIB_WING_MIN_AWA_DEG, Sim } from "../src/core/sim";
 import { Environment } from "../src/core/environment";
 import { harbor20 } from "../src/boats/harbor20";
 import { kn, toKn, wrapDeg, DEG } from "../src/core/units";
-import { auxiliaryThrust, hullDrag, rudderForces } from "../src/core/physics/hydro";
+import {
+  auxiliaryThrust,
+  hullDrag,
+  keelForces,
+  rudderForces,
+} from "../src/core/physics/hydro";
 import {
   downwindExposure,
   idealBoomAngle,
@@ -16,6 +21,7 @@ import {
   stepWingedBoom,
 } from "../src/core/physics/sails";
 import { MobDrill, MOB_ARM_DISTANCE_M } from "../src/ui/hud";
+import { apparentWind, closeHauledHeading } from "../src/core/physics/wind";
 
 const DT = 1 / 60;
 
@@ -99,6 +105,28 @@ describe("Harbor 20 class specification", () => {
 });
 
 describe("wind environment", () => {
+  it("orients a close-hauled start on the requested tack", () => {
+    expect(closeHauledHeading(0, 45, "starboard")).toBe(315);
+    expect(closeHauledHeading(0, 45, "port")).toBe(45);
+    expect(closeHauledHeading(250, 45, "starboard")).toBe(205);
+  });
+
+  it("derives apparent wind from true wind minus ground velocity", () => {
+    const heading = 315 * DEG;
+    const trueWind = { speed: kn(12), directionFrom: 0 };
+    const stationary = apparentWind(trueWind, heading, { x: 0, y: 0 });
+    const moving = apparentWind(trueWind, heading, {
+      x: Math.sin(heading) * kn(4),
+      y: Math.cos(heading) * kn(4),
+    });
+
+    expect(stationary.angle).toBeCloseTo(45, 8);
+    expect(toKn(stationary.speed)).toBeCloseTo(12, 8);
+    expect(moving.angle).toBeGreaterThan(0);
+    expect(moving.angle).toBeLessThan(stationary.angle);
+    expect(moving.speed).toBeGreaterThan(stationary.speed);
+  });
+
   it("keeps Gaussian gusts finite at the PRNG's upper endpoint", () => {
     // This seed's first xorshift output is 0xffffffff, the exact case that
     // previously rounded above 1 before the Box-Muller transform.
@@ -116,6 +144,35 @@ describe("wind environment", () => {
 });
 
 describe("sail aerodynamics", () => {
+  it("scales pressure with apparent-wind speed squared and mirrors force by tack", () => {
+    const main = harbor20.sails.find((sail) => sail.id === "main")!;
+    const low = solveSail(
+      main,
+      { speed: kn(6), angle: 35, vector: { x: 0, y: 0 } },
+      15,
+      0,
+    );
+    const starboard = solveSail(
+      main,
+      { speed: kn(12), angle: 35, vector: { x: 0, y: 0 } },
+      15,
+      0,
+    );
+    const port = solveSail(
+      main,
+      { speed: kn(12), angle: -35, vector: { x: 0, y: 0 } },
+      -15,
+      0,
+    );
+
+    expect(starboard.drive / low.drive).toBeCloseTo(4, 8);
+    expect(starboard.side / low.side).toBeCloseTo(4, 8);
+    expect(starboard.drive).toBeCloseTo(port.drive, 8);
+    expect(starboard.side).toBeCloseTo(-port.side, 8);
+    expect(starboard.heel).toBeLessThan(0);
+    expect(port.heel).toBeGreaterThan(0);
+  });
+
   it("uses jib trim as the self-tending club boom's outward limit", () => {
     const jib = harbor20.sails.find((sail) => sail.id === "jib")!;
 
@@ -336,6 +393,53 @@ describe("sail aerodynamics", () => {
     expect(rudder.yaw).toBeCloseTo(-rudder.side * harbor20.rudder.arm, 8);
   });
 
+  it("turns helm beyond 12.5 degrees increasingly into a brake", () => {
+    const normalHelm = rudderForces(harbor20, 2, 12.5);
+    const hardOver = rudderForces(harbor20, 2, 35);
+
+    expect(hardOver.surge).toBeLessThan(normalHelm.surge);
+    expect(Math.abs(hardOver.side)).toBeLessThan(Math.abs(normalHelm.side));
+    expect(Math.abs(hardOver.yaw)).toBeLessThan(Math.abs(normalHelm.yaw));
+  });
+
+  it("applies mirrored keel force and moment at the CLR", () => {
+    const starboard = keelForces(harbor20, 2, -0.2, 0.1);
+    const port = keelForces(harbor20, 2, 0.2, -0.1);
+
+    expect(starboard.side).toBeGreaterThan(0);
+    expect(starboard.yaw).toBeCloseTo(
+      starboard.side * harbor20.keelArm,
+      8,
+    );
+    expect(port.surge).toBeCloseTo(starboard.surge, 8);
+    expect(port.side).toBeCloseTo(-starboard.side, 8);
+    expect(port.yaw).toBeCloseTo(-starboard.yaw, 8);
+  });
+
+  it("keeps passive keel and rudder forces energy dissipative", () => {
+    const u = 2;
+    const v = -0.25;
+    const r = 0.12;
+    const keel = keelForces(harbor20, u, v, r);
+    const rudder = rudderForces(harbor20, u, 25, v, r);
+    const keelPower = keel.surge * u + keel.side * v + keel.yaw * r;
+    const rudderPower =
+      rudder.surge * u + rudder.side * v + rudder.yaw * r;
+
+    expect(keelPower).toBeLessThan(0);
+    expect(rudderPower).toBeLessThan(0);
+  });
+
+  it("uses stern yaw inflow to unload and damp the rudder", () => {
+    const straight = rudderForces(harbor20, 2, 20, 0, 0);
+    const turning = rudderForces(harbor20, 2, 20, 0, 0.2);
+    const centered = rudderForces(harbor20, 2, 0, 0, 0.2);
+
+    expect(turning.angleOfAttackDeg).toBeLessThan(straight.angleOfAttackDeg);
+    expect(centered.angleOfAttackDeg).toBeLessThan(0);
+    expect(centered.yaw).toBeLessThan(0);
+  });
+
   it("opposes both forward motion and sternway with hull resistance", () => {
     const forward = hullDrag(harbor20, 0.5);
     const astern = hullDrag(harbor20, -0.5);
@@ -537,7 +641,24 @@ describe("steady-state sailing (mini polar)", () => {
 
   it("cannot hold an illegal upwind track even when the bow is pinched", () => {
     for (const attemptedTwa of [20, 30, 35]) {
-      const { telemetry } = steadyPoint(12, attemptedTwa);
+      const sim = makeConstantSim(12, 0);
+      sim.state.heading = attemptedTwa * DEG;
+      for (let i = 0; i < 120 / DT; i++) {
+        const tel = sim.telemetry();
+        const trim = i === 0 ? 15 : Math.abs(idealBoomAngle(tel.awa));
+        const err =
+          ((attemptedTwa - sim.state.heading / DEG + 540) % 360) - 180;
+        sim.step(DT, {
+          // A firm test pilot removes the proportional controller's static
+          // weather-helm offset, so this checks the requested bow heading
+          // rather than an autopilot calibration artifact.
+          tiller: Math.max(-0.8, Math.min(0.8, -err / 5)),
+          sheetTargetDeg: trim,
+          jibTargetDeg: trim,
+          auxOn: false,
+        });
+      }
+      const telemetry = sim.telemetry();
       const courseOffWind = Math.abs(wrapDeg(telemetry.cog));
       expect(courseOffWind).toBeGreaterThanOrEqual(35);
     }
@@ -545,6 +666,84 @@ describe("steady-state sailing (mini polar)", () => {
 });
 
 describe("dynamic behavior", () => {
+  it("uses boat plus crew mass for translational inertia", () => {
+    const loaded = makeConstantSim(12, 0);
+    const lightEnv = new Environment({
+      speed: kn(12),
+      directionFrom: 0,
+      gust: kn(12),
+      source: "test",
+    });
+    lightEnv.windAt = () => ({ speed: kn(12), directionFrom: 0 });
+    const light = new Sim({ ...harbor20, crewMass: 0 }, lightEnv, null);
+    loaded.state.heading = light.state.heading = 315 * DEG;
+    const inputs = {
+      tiller: 0,
+      sheetTargetDeg: 15,
+      jibTargetDeg: 15,
+      auxOn: false,
+    };
+
+    loaded.step(DT, inputs);
+    light.step(DT, inputs);
+
+    const expectedAccelerationRatio =
+      (harbor20.mass + harbor20.crewMass) / harbor20.mass;
+    expect(light.state.u / loaded.state.u).toBeCloseTo(expectedAccelerationRatio, 8);
+  });
+
+  it("retains way and pivots forward in a 4 kn hard-over tack", () => {
+    const sim = makeConstantSim(10, 0);
+    sim.state.heading = 315 * DEG;
+    for (let i = 0; i < 60 / DT; i++) {
+      sim.step(DT, {
+        tiller: headingHold(sim, 315),
+        sheetTargetDeg: 15,
+        jibTargetDeg: 15,
+        auxOn: false,
+      });
+    }
+
+    const entryScale = kn(4) / Math.hypot(sim.state.u, sim.state.v);
+    sim.state.u *= entryScale;
+    sim.state.v *= entryScale;
+    sim.state.r = 0;
+
+    let minSog = Infinity;
+    let sogAtOneSecond = 0;
+    let initialTurnRadius = 0;
+    let initialPivot = 0;
+    let clearedNoGoAt: number | null = null;
+    for (let i = 1; i <= 8 / DT; i++) {
+      sim.step(DT, {
+        tiller: -1,
+        sheetTargetDeg: 15,
+        jibTargetDeg: 15,
+        auxOn: false,
+      });
+      const tel = sim.telemetry();
+      minSog = Math.min(minSog, tel.sog);
+      if (i === 0.5 / DT) {
+        initialTurnRadius =
+          Math.hypot(sim.state.u, sim.state.v) / Math.abs(sim.state.r);
+        initialPivot = -sim.state.v / sim.state.r;
+      }
+      if (i === 1 / DT) sogAtOneSecond = tel.sog;
+      if (clearedNoGoAt === null && sim.state.heading / DEG >= 395) {
+        clearedNoGoAt = i * DT;
+      }
+    }
+
+    expect(sogAtOneSecond).toBeGreaterThan(3);
+    expect(minSog).toBeGreaterThan(1.2);
+    expect(initialTurnRadius).toBeGreaterThan(8);
+    expect(initialTurnRadius).toBeLessThan(18);
+    expect(initialPivot).toBeGreaterThan(0.5);
+    expect(initialPivot).toBeLessThan(harbor20.lwl / 2);
+    expect(clearedNoGoAt).not.toBeNull();
+    expect(clearedNoGoAt!).toBeLessThan(6);
+  }, 30000);
+
   it("coasts a useful final-approach distance with both sheets released", () => {
     const sim = makeConstantSim(12, 0);
     sim.state.heading = 45 * DEG;
@@ -699,16 +898,24 @@ describe("dynamic behavior", () => {
 
   it("tacks through the wind when carrying way", () => {
     const sim = makeSim(12, 0); // wind from N
-    sim.state.heading = (315 * Math.PI) / 180; // start close-hauled, port tack
+    sim.state.heading = (315 * Math.PI) / 180; // start close-hauled, starboard tack
     sailFor(sim, 60, 315);
     expect(sim.telemetry().sog).toBeGreaterThan(3);
     // push the tiller to PORT (negative) to turn starboard through the wind to 045
+    let reachedNewCourse = false;
     for (let i = 0; i < 10 / DT; i++) {
-      sim.step(DT, { tiller: -0.7, sheetTargetDeg: 10, jibTargetDeg: 15, auxOn: false });
+      if (sim.state.heading / DEG >= 400) reachedNewCourse = true;
+      sim.step(DT, {
+        tiller: reachedNewCourse ? headingHold(sim, 45) : -0.7,
+        sheetTargetDeg: 10,
+        jibTargetDeg: 15,
+        auxOn: false,
+      });
     }
     const hdg = ((sim.state.heading * 180) / Math.PI + 720) % 360;
-    expect(hdg).toBeGreaterThan(20);
-    expect(hdg).toBeLessThan(80);
+    expect(reachedNewCourse).toBe(true);
+    expect(hdg).toBeGreaterThan(35);
+    expect(hdg).toBeLessThan(60);
     expect(sim.telemetry().sog).toBeGreaterThan(1.5);
   }, 30000);
 
@@ -1012,15 +1219,26 @@ describe("MOB drill and marker drift", () => {
   }, 30000);
 
   for (const windKn of [6, 12, 16]) {
-    it(`completes a controlled Figure-8 return in ${windKn} kn`, () => {
+    it(`completes a starboard-tack Figure-8 return in ${windKn} kn`, () => {
       const sim = makeConstantSim(windKn, 0);
-      sim.state.heading = 90 * DEG;
-      sailFor(sim, 120, 90);
+      const closeHauled = closeHauledHeading(
+        0,
+        harbor20.closeHauledTwa,
+        "starboard",
+      );
+      const starboardBeamReach = 270;
+      const portBroadReach = 165;
+      sim.state.heading = closeHauled * DEG;
+      const start = sailFor(sim, 120, closeHauled);
+      const startDrive = start.sails.reduce((sum, sail) => sum + sail.drive, 0);
+      const startSide = start.sails.reduce((sum, sail) => sum + sail.side, 0);
 
       const mob = sim.dropFloat("mob");
       const drill = new MobDrill();
       drill.drop();
       const dropTime = sim.time;
+      let previousSpeed = start.speedThroughWater;
+      let maxSpeedStep = 0;
 
       const advance = (tiller: number, main: number, jib: number) => {
         sim.step(DT, {
@@ -1029,43 +1247,56 @@ describe("MOB drill and marker drift", () => {
           jibTargetDeg: jib,
           auxOn: false,
         });
+        const speed = sim.telemetry().speedThroughWater;
+        maxSpeedStep = Math.max(maxSpeedStep, Math.abs(speed - previousSpeed));
+        previousSpeed = speed;
         const br = sim.bearingAndRange(mob.pos);
         drill.update(DT, br.bearing, br.distance, toKn(sim.relativeSpeedTo(mob)));
       };
 
-      // Establish a midpoint departure: 3.5 boat lengths on a beam reach
-      // before beginning the long, no-jibe turn.
+      // From close-hauled, immediately bear away onto a starboard-tack beam
+      // reach. Trim the main for the new point of sail and leave the jib set.
+      let reachedBeamReach = false;
       while (
         sim.bearingAndRange(mob.pos).distance < 3.5 * harbor20.loa &&
-        sim.time - dropTime < 20
+        sim.time - dropTime < 25
       ) {
         const trim = Math.abs(idealBoomAngle(sim.telemetry().awa));
-        advance(headingHold(sim, 90), trim, Math.min(75, Math.max(8, trim)));
+        advance(headingHold(sim, starboardBeamReach), trim, sim.state.jibDeg);
+        reachedBeamReach ||=
+          Math.abs(wrapDeg(sim.telemetry().headingDeg - starboardBeamReach)) < 8;
       }
       const departureRange = sim.bearingAndRange(mob.pos).distance;
+      const departureHeading = sim.telemetry().headingDeg;
 
       const heldMain = sim.state.sheetDeg;
       const heldJib = sim.state.jibDeg;
       let closestToHeadToWind = 180;
       let deepestTackAwa = 0;
-      while (sim.state.heading / DEG > -150 && sim.time - dropTime < 60) {
+      let minimumTackSpeed = Infinity;
+      while (sim.state.heading / DEG < 510 && sim.time - dropTime < 60) {
         advance(
-          15 / harbor20.rudder.maxEffectiveAngle,
+          -15 / harbor20.rudder.maxEffectiveAngle,
           heldMain,
           heldJib,
         );
-        const absAwa = Math.abs(sim.telemetry().awa);
+        const tel = sim.telemetry();
+        const absAwa = Math.abs(tel.awa);
         closestToHeadToWind = Math.min(closestToHeadToWind, absAwa);
         deepestTackAwa = Math.max(deepestTackAwa, absAwa);
+        minimumTackSpeed = Math.min(minimumTackSpeed, tel.speedThroughWater);
       }
       const postTackHeading = sim.telemetry().headingDeg;
+      const postTackSide = sim
+        .telemetry()
+        .sails.reduce((sum, sail) => sum + sail.side, 0);
 
       // Release both sheets on the broad reach until the marker bears on a
       // close-reach return line, then power up only while turning onto it.
       while (sim.time - dropTime < 90) {
         const br = sim.bearingAndRange(mob.pos);
-        if (br.bearing >= 300 && br.bearing <= 330 && br.distance > 10) break;
-        advance(headingHold(sim, 195), 85, 75);
+        if (br.bearing >= 30 && br.bearing <= 60 && br.distance > 10) break;
+        advance(headingHold(sim, portBroadReach), 85, 75);
       }
       const layline = sim.bearingAndRange(mob.pos);
 
@@ -1087,14 +1318,26 @@ describe("MOB drill and marker drift", () => {
         .telemetry()
         .sails.find((sail) => sail.sailId === "main")!;
 
+      expect(start.awa).toBeGreaterThan(0);
+      expect(start.awa).toBeLessThan(harbor20.closeHauledTwa);
+      expect(start.aws).toBeGreaterThan(start.tws);
+      expect(startDrive).toBeGreaterThan(0);
+      expect(startSide).toBeLessThan(0);
+      expect(start.heelDeg).toBeLessThan(0);
+      expect(reachedBeamReach).toBe(true);
       expect(departureRange).toBeGreaterThanOrEqual(3.5 * harbor20.loa);
+      expect(Math.abs(wrapDeg(departureHeading - starboardBeamReach))).toBeLessThan(12);
       expect(drill.status.armed).toBe(true);
-      expect(postTackHeading).toBeGreaterThan(205);
-      expect(postTackHeading).toBeLessThan(220);
+      expect(postTackHeading).toBeGreaterThan(140);
+      expect(postTackHeading).toBeLessThan(155);
       expect(closestToHeadToWind).toBeLessThan(10);
       expect(deepestTackAwa).toBeLessThan(175);
-      expect(layline.bearing).toBeGreaterThanOrEqual(300);
-      expect(layline.bearing).toBeLessThanOrEqual(330);
+      expect(minimumTackSpeed).toBeGreaterThan(0.3);
+      expect(maxSpeedStep).toBeLessThan(0.1);
+      expect(sim.telemetry().awa).toBeLessThan(0);
+      expect(postTackSide).toBeGreaterThan(0);
+      expect(layline.bearing).toBeGreaterThanOrEqual(30);
+      expect(layline.bearing).toBeLessThanOrEqual(60);
       expect(drill.status.recovered).toBe(true);
       expect(finalRange).toBeLessThan(5);
       expect(finalRelativeSpeed).toBeLessThan(1);
