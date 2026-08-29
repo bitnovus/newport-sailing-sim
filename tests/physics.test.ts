@@ -1403,22 +1403,22 @@ describe("MOB drill and marker drift", () => {
 
     expect(MOB_ARM_DISTANCE_M).toBeCloseTo(3 * harbor20.loa, 1);
 
-    drill.update(DT, 0, 0, 0);
+    drill.update(DT, 0, 0, 0, 0);
     expect(drill.status.recovered).toBe(false);
     expect(drill.status.armed).toBe(false);
 
     // Even re-entering the recovery circle cannot score before departure.
-    drill.update(5, 180, 0.5, 0);
+    drill.update(5, 180, 0.5, 0, 0);
     expect(drill.status.recovered).toBe(false);
 
-    drill.update(5, 180, MOB_ARM_DISTANCE_M, 2);
+    drill.update(5, 180, MOB_ARM_DISTANCE_M, 15, 2);
     expect(drill.status.armed).toBe(true);
     expect(drill.status.recovered).toBe(false);
 
-    drill.update(5, 0, MOB_RECOVERY_DISTANCE_M + 0.01, 0.5);
+    drill.update(5, 0, 2.5, MOB_RECOVERY_DISTANCE_M + 0.01, 0.5);
     expect(drill.status.recovered).toBe(false);
 
-    drill.update(5, 0, MOB_RECOVERY_DISTANCE_M, 0.5);
+    drill.update(5, 0, 2.5, MOB_RECOVERY_DISTANCE_M, 0.5);
     expect(drill.status.recovered).toBe(true);
     expect(drill.status.result?.timeSec).toBeCloseTo(20 + DT);
     expect(drill.status.result?.closestM).toBe(MOB_RECOVERY_DISTANCE_M);
@@ -1434,7 +1434,9 @@ describe("MOB drill and marker drift", () => {
       jibTargetDeg: 75,
       auxOn: false,
     });
-    const carriedRelativeSpeed = toKn(carried.relativeSpeedTo(carriedMob));
+    const carriedRelativeSpeed = toKn(
+      carried.pickupMetricsTo(carriedMob).relativeSpeed,
+    );
 
     // Boat and marker can move over the chart at 2 kn yet be stopped relative
     // to each other because the same current carries both.
@@ -1442,8 +1444,8 @@ describe("MOB drill and marker drift", () => {
     expect(carriedRelativeSpeed).toBeLessThan(0.001);
     const valid = new MobDrill();
     valid.drop();
-    valid.update(1, 0, MOB_ARM_DISTANCE_M, carriedRelativeSpeed);
-    valid.update(1, 0, 0.5, carriedRelativeSpeed);
+    valid.update(1, 0, MOB_ARM_DISTANCE_M, 15, carriedRelativeSpeed);
+    valid.update(1, 0, 2, 0.5, carriedRelativeSpeed);
     expect(valid.status.recovered).toBe(true);
 
     const opposing = makeConstantSim(0, 0);
@@ -1456,7 +1458,9 @@ describe("MOB drill and marker drift", () => {
       jibTargetDeg: 75,
       auxOn: false,
     });
-    const opposingRelativeSpeed = toKn(opposing.relativeSpeedTo(opposingMob));
+    const opposingRelativeSpeed = toKn(
+      opposing.pickupMetricsTo(opposingMob).relativeSpeed,
+    );
 
     // An opposing current can nearly cancel SOG even though the hull is still
     // passing the marker too fast for a controlled pickup.
@@ -1464,9 +1468,55 @@ describe("MOB drill and marker drift", () => {
     expect(opposingRelativeSpeed).toBeGreaterThan(1.9);
     const invalid = new MobDrill();
     invalid.drop();
-    invalid.update(1, 0, MOB_ARM_DISTANCE_M, opposingRelativeSpeed);
-    invalid.update(1, 0, 0.5, opposingRelativeSpeed);
+    invalid.update(1, 0, MOB_ARM_DISTANCE_M, 15, opposingRelativeSpeed);
+    invalid.update(1, 0, 2, 0.5, opposingRelativeSpeed);
     expect(invalid.status.recovered).toBe(false);
+  });
+
+  it("measures pickup clearance from the physical hull instead of its center", () => {
+    const sim = makeConstantSim(0, 0);
+    sim.state.heading = 0;
+    const mob = sim.dropFloat("mob", 0);
+
+    mob.pos = {
+      x: harbor20.beam / 2 + MOB_RECOVERY_DISTANCE_M,
+      y: 0,
+    };
+    let centerRange = sim.bearingAndRange(mob.pos).distance;
+    let pickup = sim.pickupMetricsTo(mob);
+    expect(centerRange).toBeCloseTo(
+      harbor20.beam / 2 + MOB_RECOVERY_DISTANCE_M,
+      8,
+    );
+    expect(pickup.distance).toBeCloseTo(MOB_RECOVERY_DISTANCE_M, 8);
+
+    mob.pos = {
+      x: 0,
+      y: harbor20.loa / 2 + MOB_RECOVERY_DISTANCE_M,
+    };
+    centerRange = sim.bearingAndRange(mob.pos).distance;
+    pickup = sim.pickupMetricsTo(mob);
+    expect(centerRange).toBeCloseTo(
+      harbor20.loa / 2 + MOB_RECOVERY_DISTANCE_M,
+      8,
+    );
+    expect(pickup.distance).toBeCloseTo(MOB_RECOVERY_DISTANCE_M, 8);
+  });
+
+  it("includes yaw velocity at the rail in the pickup speed", () => {
+    const sim = makeConstantSim(0, 0);
+    sim.state.heading = 0;
+    sim.state.r = 0.2;
+    const mob = sim.dropFloat("mob", 0);
+    expect(sim.pickupMetricsTo(mob).relativeSpeed).toBeCloseTo(0, 8);
+
+    mob.pos = { x: harbor20.beam / 2 + 0.5, y: 0 };
+
+    expect(sim.relativeSpeedTo(mob)).toBeCloseTo(0, 8);
+    expect(sim.pickupMetricsTo(mob).relativeSpeed).toBeCloseTo(
+      sim.state.r * (harbor20.beam / 2),
+      8,
+    );
   });
 
   it("keeps marker IDs unique and supports a complete drill clear", () => {
@@ -1540,7 +1590,14 @@ describe("MOB drill and marker drift", () => {
         maxSpeedStep = Math.max(maxSpeedStep, Math.abs(speed - previousSpeed));
         previousSpeed = speed;
         const br = sim.bearingAndRange(mob.pos);
-        drill.update(DT, br.bearing, br.distance, toKn(sim.relativeSpeedTo(mob)));
+        const pickup = sim.pickupMetricsTo(mob);
+        drill.update(
+          DT,
+          br.bearing,
+          br.distance,
+          pickup.distance,
+          toKn(pickup.relativeSpeed),
+        );
       };
 
       // From close-hauled, immediately bear away onto a starboard-tack beam
@@ -1596,18 +1653,20 @@ describe("MOB drill and marker drift", () => {
         // rudder otherwise falls behind its downwind motion near the pickup.
         const windageLead =
           br.distance < 8 ? Math.max(0, (sim.telemetry().tws - 8) * 2) : 0;
-        const relativeSpeed = toKn(sim.relativeSpeedTo(mob));
+        const pickup = sim.pickupMetricsTo(mob);
+        const relativeSpeed = toKn(pickup.relativeSpeed);
         // In light air, briefly retrim only if the boat has nearly stopped
         // outside the pickup circle; ease again before relative speed builds.
         const main =
-          br.distance > MOB_RECOVERY_DISTANCE_M && relativeSpeed < 0.35
+          pickup.distance > MOB_RECOVERY_DISTANCE_M && relativeSpeed < 0.35
             ? Math.abs(idealBoomAngle(sim.telemetry().awa))
             : 85;
         advance(headingHold(sim, br.bearing + windageLead), main, 75);
       }
 
       const finalRange = sim.bearingAndRange(mob.pos).distance;
-      const finalRelativeSpeed = toKn(sim.relativeSpeedTo(mob));
+      const finalPickup = sim.pickupMetricsTo(mob);
+      const finalRelativeSpeed = toKn(finalPickup.relativeSpeed);
       const main = sim
         .telemetry()
         .sails.find((sail) => sail.sailId === "main")!;
@@ -1633,7 +1692,10 @@ describe("MOB drill and marker drift", () => {
       expect(layline.bearing).toBeGreaterThanOrEqual(30);
       expect(layline.bearing).toBeLessThanOrEqual(60);
       expect(drill.status.recovered).toBe(true);
-      expect(finalRange).toBeLessThanOrEqual(MOB_RECOVERY_DISTANCE_M);
+      expect(finalPickup.distance).toBeLessThanOrEqual(MOB_RECOVERY_DISTANCE_M);
+      expect(finalRange).toBeLessThanOrEqual(
+        harbor20.loa / 2 + MOB_RECOVERY_DISTANCE_M,
+      );
       expect(finalRelativeSpeed).toBeLessThan(1);
       expect(main.luffing).toBe(true);
       expect(sim.time - dropTime).toBeLessThan(150);

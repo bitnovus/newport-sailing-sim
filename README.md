@@ -65,8 +65,10 @@ refresh no longer loses your sail history — CLEAR is the intentional reset
 for both the track and MOB drill.
 MOB recovery scoring arms once separation reaches three boat lengths (18.3 m),
 the low end of the Figure-8 beam-reach departure. Recovery requires getting
-within 1 m at less than 1 kn relative to the drifting marker, so harbor current
-cannot create a false pass or failure.
+the drifting marker within 1 m of the physical hull at less than 1 kn relative
+to the nearest hull point. That contact speed includes the hull's local yaw
+velocity, so harbor current or a still-swinging bow/stern cannot create a false
+pass; a successful pickup removes the marker from the water.
 The tiller slider at screen bottom holds any selected helm angle; CENTER
 returns it to 0°. The jib trim slider holds a separate jib-sheet limit while
 wind pressure self-tends the club boom. Touch/hold mainsheet buttons remain

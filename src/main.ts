@@ -366,10 +366,23 @@ function frame(now: number): void {
   const [lng, lat] = water.plane.unproject(sim.state.pos);
 
   // MOB drill
-  const mob = sim.floats.find((f) => f.id === "mob");
+  let mob = sim.floats.find((f) => f.id === "mob");
   if (mob) {
     const br = sim.bearingAndRange(mob.pos);
-    drill.update(dt, br.bearing, br.distance, toKn(sim.relativeSpeedTo(mob)));
+    const pickup = sim.pickupMetricsTo(mob);
+    const wasRecovered = drill.status.recovered;
+    drill.update(
+      dt,
+      br.bearing,
+      br.distance,
+      pickup.distance,
+      toKn(pickup.relativeSpeed),
+    );
+    if (!wasRecovered && drill.status.recovered) {
+      sim.removeFloat("mob");
+      mob = undefined;
+      hud.flash("MOB picked up", 2200);
+    }
     hud.updateMob(drill.status);
   }
 

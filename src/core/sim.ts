@@ -1,6 +1,16 @@
 import type { BoatDefinition } from "../boats/types";
 import { clamp, DEG, toDeg, toKn } from "./units";
-import { add, headingVec, len, starboardVec, sub, v, type Vec2 } from "./vec";
+import {
+  add,
+  dot,
+  headingVec,
+  len,
+  scale,
+  starboardVec,
+  sub,
+  v,
+  type Vec2,
+} from "./vec";
 import { Environment } from "./environment";
 import { apparentWind, type ApparentWind, type TrueWind } from "./physics/wind";
 import {
@@ -106,6 +116,13 @@ export interface FloatingObject {
   /** Fraction of true-wind speed it drifts downwind (0.025 ≈ dan buoy). */
   windage: number;
   droppedAt: number;
+}
+
+export interface PickupMetrics {
+  /** Shortest gap from the marker to the physical hull, meters. */
+  distance: number;
+  /** Nearest hull-point speed relative to the marker, m/s. */
+  relativeSpeed: number;
 }
 
 export class Sim {
@@ -419,6 +436,62 @@ export class Sim {
   /** Boat speed relative to a drifting object, m/s. */
   relativeSpeedTo(f: FloatingObject): number {
     return len(sub(this.boatGroundVelocity(), f.velocity));
+  }
+
+  /**
+   * Pickup clearance and contact speed at the nearest point on the hull.
+   *
+   * The planform is approximated as a capsule with the configured LOA and
+   * beam. Unlike center-of-mass range, this lets a marker sit beside the rail
+   * without having to pass through the boat. Contact speed includes the local
+   * velocity from yaw, which matters when the bow or stern is still swinging.
+   */
+  pickupMetricsTo(f: FloatingObject): PickupMetrics {
+    const s = this.state;
+    const along = headingVec(s.heading);
+    const stbd = starboardVec(s.heading);
+    const toMarker = sub(f.pos, s.pos);
+    const markerForward = dot(toMarker, along);
+    const markerStarboard = dot(toMarker, stbd);
+
+    const hullRadius = this.boat.beam / 2;
+    const spineHalfLength = Math.max(0, this.boat.loa / 2 - hullRadius);
+    const spineForward = clamp(
+      markerForward,
+      -spineHalfLength,
+      spineHalfLength,
+    );
+    const radialForward = markerForward - spineForward;
+    const radialDistance = Math.hypot(radialForward, markerStarboard);
+
+    // Outside the capsule, project to the nearest hull surface. If the marker
+    // is already inside the hull planform (including immediately after the
+    // drop), use its occupied point instead of choosing an arbitrary rail.
+    const insideHull = radialDistance <= hullRadius;
+    const radialScale = insideHull ? 1 : hullRadius / radialDistance;
+    const hullForward = insideHull
+      ? markerForward
+      : spineForward + radialForward * radialScale;
+    const hullStarboard = insideHull
+      ? markerStarboard
+      : markerStarboard * radialScale;
+    const hullOffset = add(
+      scale(along, hullForward),
+      scale(stbd, hullStarboard),
+    );
+
+    // Positive yaw is clockwise. For an East/North offset (x, y), the local
+    // rotational velocity is (r*y, -r*x).
+    const rotationalVelocity = v(
+      s.r * hullOffset.y,
+      -s.r * hullOffset.x,
+    );
+    const hullVelocity = add(this.boatGroundVelocity(), rotationalVelocity);
+
+    return {
+      distance: Math.max(0, radialDistance - hullRadius),
+      relativeSpeed: len(sub(hullVelocity, f.velocity)),
+    };
   }
 
   telemetry(): Telemetry {

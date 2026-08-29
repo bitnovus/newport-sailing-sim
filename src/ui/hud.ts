@@ -2,7 +2,7 @@ import type { Telemetry } from "../core/sim";
 
 /** Three Harbor 20 lengths: the low end of the Figure-8 beam-reach departure. */
 export const MOB_ARM_DISTANCE_M = 18.3;
-/** Close enough to put the marker alongside for a simulated pickup. */
+/** Maximum physical gap from the hull for a simulated pickup. */
 export const MOB_RECOVERY_DISTANCE_M = 1;
 
 export interface MobStatus {
@@ -11,8 +11,11 @@ export interface MobStatus {
   armed: boolean;
   timeSec: number;
   bearing: number;
+  /** Center-to-marker range, used for navigation and departure arming. */
   distance: number;
-  /** Boat speed relative to the drifting marker, knots. */
+  /** Shortest physical gap from the hull to the marker, meters. */
+  pickupDistance: number;
+  /** Nearest hull-point speed relative to the drifting marker, knots. */
   relativeSpeed: number;
   recovered: boolean;
   result?: { timeSec: number; closestM: number };
@@ -195,7 +198,7 @@ export class Hud {
     } else {
       this.rows["mob-status"].textContent =
         m.distance < 30
-          ? `PICKUP — within ${MOB_RECOVERY_DISTANCE_M.toFixed(0)} m · below 1 kn relative`
+          ? `PICKUP — ${fmt(m.pickupDistance)} m hull gap · need ≤${MOB_RECOVERY_DISTANCE_M.toFixed(0)} m and <1 kn`
           : "keep a lookout";
       this.mobPanel.classList.remove("good");
     }
@@ -216,6 +219,7 @@ export class MobDrill {
     timeSec: 0,
     bearing: 0,
     distance: 0,
+    pickupDistance: 0,
     relativeSpeed: 0,
     recovered: false,
   };
@@ -228,6 +232,7 @@ export class MobDrill {
       timeSec: 0,
       bearing: 0,
       distance: 0,
+      pickupDistance: 0,
       relativeSpeed: 0,
       recovered: false,
     };
@@ -241,6 +246,7 @@ export class MobDrill {
       timeSec: 0,
       bearing: 0,
       distance: 0,
+      pickupDistance: 0,
       relativeSpeed: 0,
       recovered: false,
     };
@@ -251,6 +257,7 @@ export class MobDrill {
     dt: number,
     bearing: number,
     distance: number,
+    pickupDistance: number,
     relativeSpeed: number,
   ): void {
     const s = this.status;
@@ -258,6 +265,7 @@ export class MobDrill {
     s.timeSec += dt;
     s.bearing = bearing;
     s.distance = distance;
+    s.pickupDistance = pickupDistance;
     s.relativeSpeed = relativeSpeed;
 
     // The marker is dropped at the boat, so recovery must not be possible
@@ -266,13 +274,13 @@ export class MobDrill {
     if (!s.armed) {
       if (distance >= MOB_ARM_DISTANCE_M) {
         s.armed = true;
-        this.closest = distance;
+        this.closest = pickupDistance;
       }
       return;
     }
 
-    this.closest = Math.min(this.closest, distance);
-    if (distance <= MOB_RECOVERY_DISTANCE_M && relativeSpeed < 1) {
+    this.closest = Math.min(this.closest, pickupDistance);
+    if (pickupDistance <= MOB_RECOVERY_DISTANCE_M && relativeSpeed < 1) {
       s.recovered = true;
       s.result = { timeSec: s.timeSec, closestM: this.closest };
     }
