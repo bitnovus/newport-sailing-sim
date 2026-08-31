@@ -41,9 +41,13 @@ export const harbor20: BoatDefinition = {
   // point itself (which emerges farther forward once sway and yaw couple).
   keelArm: 0.6,
   maxEffectiveLeeway: 10,
-  hullLateralDrag: 3600,
+  // Strong quadratic crossflow resistance limits the large transient
+  // sideslip of a hard turn without flattening normal close-hauled leeway.
+  hullLateralDrag: 6000,
   yawDampingLinear: 300,
-  yawDampingQuadratic: 645,
+  // Keep light linear damping so a low-wind tack carries through irons, then
+  // add a stronger rate-squared brake for hard turns and rudder pull-outs.
+  yawDampingQuadratic: 1800,
   rightingMomentPerDeg: 170,
   rudder: {
     area: 0.28,

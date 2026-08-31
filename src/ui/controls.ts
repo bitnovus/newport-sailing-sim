@@ -87,7 +87,7 @@ export class Controls {
       });
     }
     root.querySelector<HTMLElement>("[data-tiller-center]")?.addEventListener("click", () => {
-      this.setTouchTillerDegrees(0);
+      this.centerTiller();
     });
     this.setTouchTillerDegrees(0);
     this.setJibTrimDegrees(this.state.jibTargetDeg);
@@ -124,6 +124,11 @@ export class Controls {
     this.tillerSlider?.setAttribute("aria-valuetext", position);
   }
 
+  private centerTiller(): void {
+    this.setTouchTillerDegrees(0);
+    this.state.tiller = 0;
+  }
+
   private setJibTrimDegrees(degrees: number): void {
     const bounded = Math.max(this.minJibDeg, Math.min(this.maxJibDeg, degrees));
     this.state.jibTargetDeg = bounded;
@@ -156,8 +161,7 @@ export class Controls {
     this.state.tiller += (target - this.state.tiller) * (1 - Math.exp(-dt * rate));
 
     if (k.has("arrowdown") || k.has("c")) {
-      this.setTouchTillerDegrees(0);
-      this.state.tiller *= Math.exp(-dt * 8);
+      this.centerTiller();
     }
 
     // sheet: +1 = trim IN (boom toward centerline, smaller angle)

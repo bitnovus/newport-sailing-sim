@@ -948,10 +948,16 @@ describe("dynamic behavior", () => {
       auxOn: false,
     };
 
+    let peakLeeway = 0;
     for (let i = 0; i < 2 / DT; i++) {
       sim.step(DT, { ...inputs, tiller: -1 });
+      peakLeeway = Math.max(
+        peakLeeway,
+        Math.abs(sim.telemetry().leeway),
+      );
     }
     expect(sim.state.r).toBeGreaterThan(0.3);
+    expect(peakLeeway).toBeLessThan(15.5);
 
     let centeredAt: number | null = null;
     let yawAtCenter = 0;
@@ -975,7 +981,9 @@ describe("dynamic behavior", () => {
     expect(yawAtCenter).toBeGreaterThan(0.25);
     expect(sim.state.r).toBeGreaterThan(0);
     expect(sim.state.r).toBeLessThan(yawAtCenter * 0.05);
-    expect((sim.state.heading - headingAtCenter) / DEG).toBeGreaterThan(15);
+    const headingCarryDeg = (sim.state.heading - headingAtCenter) / DEG;
+    expect(headingCarryDeg).toBeGreaterThan(15);
+    expect(headingCarryDeg).toBeLessThan(30);
   });
 
   it("retains way and pivots forward in a 4 kn hard-over tack", () => {
