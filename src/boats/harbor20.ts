@@ -44,6 +44,9 @@ export const harbor20: BoatDefinition = {
   // Strong quadratic crossflow resistance limits the large transient
   // sideslip of a hard turn without flattening normal close-hauled leeway.
   hullLateralDrag: 6000,
+  // Around 0.4 kn, transition from broadside form-drag yaw resistance to the
+  // keel/rudder lift and forward-flow derivatives used while sailing.
+  crossflowTransitionSpeed: 0.21,
   yawDampingLinear: 300,
   // Keep light linear damping so a low-wind tack carries through irons, then
   // add a stronger rate-squared brake for hard turns and rudder pull-outs.

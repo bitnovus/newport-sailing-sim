@@ -148,25 +148,82 @@ export function rudderForces(
   };
 }
 
+/** Number of longitudinal stations used for the distributed hull integral. */
+const CROSSFLOW_STATIONS = 24;
+
 /**
- * Yaw damping from forward-flow resistance plus the hull's rotational
- * crossflow. The crossflow term depends on yaw rate rather than forward speed,
- * so a boat carrying rotation through a tack does not hit an artificial
- * speed-independent linear brake as its surge speed approaches zero.
+ * Low-speed yaw resistance from transverse water flow along the hull.
+ *
+ * A rotating hull still moves through the water when its forward speed is
+ * nearly zero: the local transverse velocity at station x is v + x*r. Model
+ * that form drag at stations along the waterline and integrate x*dF for the
+ * yaw moment. An elliptical station weight approximates the boat's underwater
+ * lateral-area distribution, while normalizing against the
+ * calibrated whole-hull lateral-drag coefficient.
+ *
+ * At useful forward speed the keel, rudder, and conventional yaw derivatives
+ * already model small-angle flow. Fade this broadside crossflow term above
+ * the boat's configured transition speed to avoid counting those forces
+ * twice; it remains active in the near-stall condition where lift-based
+ * models lose authority.
+ */
+export function hullCrossflowYaw(
+  boat: BoatDefinition,
+  u: number,
+  v: number,
+  r: number,
+): number {
+  if (boat.lwl <= 0 || boat.hullLateralDrag <= 0 || r === 0) return 0;
+
+  const dx = boat.lwl / CROSSFLOW_STATIONS;
+  let weightedLength = 0;
+  for (let i = 0; i < CROSSFLOW_STATIONS; i++) {
+    const x = ((i + 0.5) / CROSSFLOW_STATIONS - 0.5) * boat.lwl;
+    const station = (2 * x) / boat.lwl;
+    weightedLength += Math.sqrt(Math.max(0, 1 - station * station)) * dx;
+  }
+
+  const dragPerWeightedMeter = boat.hullLateralDrag / weightedLength;
+  const transitionSpeed = Math.max(1e-6, boat.crossflowTransitionSpeed);
+  const forwardRatio = Math.abs(u) / transitionSpeed;
+  const lowSpeedBlend = 1 / (1 + forwardRatio * forwardRatio);
+  let yaw = 0;
+
+  for (let i = 0; i < CROSSFLOW_STATIONS; i++) {
+    const x = ((i + 0.5) / CROSSFLOW_STATIONS - 0.5) * boat.lwl;
+    const station = (2 * x) / boat.lwl;
+    const areaWeight = Math.sqrt(Math.max(0, 1 - station * station));
+    const localSide = v + x * r;
+    const sideForce =
+      -lowSpeedBlend *
+      dragPerWeightedMeter *
+      areaWeight *
+      localSide *
+      Math.abs(localSide) *
+      dx;
+    yaw += x * sideForce;
+  }
+
+  return yaw;
+}
+
+/**
+ * Remaining forward-flow yaw resistance after the hull's distributed
+ * low-speed crossflow is handled by hullCrossflowYaw().
  */
 export function yawDamping(boat: BoatDefinition, u: number, r: number): number {
   const forwardFlow = Math.max(0, u);
   const lowSpeedFlow = Math.min(1, forwardFlow);
   const linearFlow = forwardFlow + lowSpeedFlow * lowSpeedFlow;
-  const crossflow = 0.5 + forwardFlow;
+  const rateSquaredFlow = forwardFlow;
   // Preserve enough angular momentum to carry a moderate-helm tack through
   // irons while retaining strong forward-flow and hard-turn damping.
   // The local-inflow rudder model now supplies part of the vessel's yaw
-  // damping. These boat-specific coefficients represent only the remaining
-  // distributed canoe-body crossflow, avoiding the former double count.
+  // damping. These boat-specific coefficients represent the remaining
+  // forward-flow derivatives; hullCrossflowYaw owns the near-stall regime.
   return -(
     boat.yawDampingLinear * linearFlow * r +
-    boat.yawDampingQuadratic * crossflow * Math.abs(r) * r
+    boat.yawDampingQuadratic * rateSquaredFlow * Math.abs(r) * r
   );
 }
 

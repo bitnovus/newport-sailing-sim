@@ -5,6 +5,7 @@ import { harbor20 } from "../src/boats/harbor20";
 import { kn, toKn, wrapDeg, DEG } from "../src/core/units";
 import {
   auxiliaryThrust,
+  hullCrossflowYaw,
   hullDrag,
   keelForces,
   rudderForces,
@@ -443,14 +444,21 @@ describe("sail aerodynamics", () => {
           const mirroredKeel = keelForces(harbor20, u, -v, -r);
           const keelPower =
             keel.surge * u + keel.side * v + keel.yaw * r;
+          const crossflow = hullCrossflowYaw(harbor20, u, v, r);
           const dampingPower = yawDamping(harbor20, u, r) * r;
 
           expect(Object.values(keel).every(Number.isFinite)).toBe(true);
           expect(keelPower).toBeLessThanOrEqual(1e-7);
+          expect(Number.isFinite(crossflow)).toBe(true);
+          expect(crossflow * r).toBeLessThanOrEqual(1e-7);
           expect(dampingPower).toBeLessThanOrEqual(0);
           expect(mirroredKeel.surge).toBeCloseTo(keel.surge, 8);
           expect(mirroredKeel.side).toBeCloseTo(-keel.side, 8);
           expect(mirroredKeel.yaw).toBeCloseTo(-keel.yaw, 8);
+          expect(hullCrossflowYaw(harbor20, u, -v, -r)).toBeCloseTo(
+            -crossflow,
+            8,
+          );
 
           for (const delta of [-35, -15, 0, 15, 35]) {
             const rudder = rudderForces(harbor20, u, delta, v, r);
@@ -802,6 +810,30 @@ describe("dynamic behavior", () => {
     expect(sim.telemetry().speedThroughWater).toBeGreaterThan(0.8);
     expect(maxSpeedStep).toBeLessThan(0.01);
     expect(sim.state.r).toBeGreaterThan(0);
+  });
+
+  it("damps residual yaw near a stall without erasing all tack carry", () => {
+    const sim = makeConstantSim(10, 0);
+    sim.state.heading = -7 * DEG;
+    sim.state.u = kn(0.3);
+    sim.state.r = -2.5 * DEG;
+    const initialTwa = -sim.state.heading / DEG;
+    const initialYawRate = Math.abs(sim.state.r);
+
+    for (let i = 0; i < 10 / DT; i++) {
+      sim.step(DT, {
+        tiller: 0,
+        sheetTargetDeg: 15,
+        jibTargetDeg: 15,
+        auxOn: false,
+      });
+    }
+
+    const headingCarry = -sim.state.heading / DEG - initialTwa;
+    expect(sim.telemetry().speedThroughWater).toBeLessThan(0.5);
+    expect(Math.abs(sim.state.r)).toBeLessThan(initialYawRate * 0.4);
+    expect(headingCarry).toBeGreaterThan(8);
+    expect(headingCarry).toBeLessThan(15);
   });
 
   it("keeps passive planar kinetic energy monotonic in calm water", () => {

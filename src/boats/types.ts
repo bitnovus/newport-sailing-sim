@@ -82,9 +82,11 @@ export interface BoatDefinition {
   maxEffectiveLeeway: number;
   /** Hull form drag against beam drift (quadratic): F = c * v * |v|. */
   hullLateralDrag: number;
+  /** Forward speed (m/s) where broadside low-speed yaw drag is half strength. */
+  crossflowTransitionSpeed: number;
   /** Forward-flow contribution to hull yaw damping, N·m per (m/s·rad/s). */
   yawDampingLinear: number;
-  /** Rotational crossflow contribution to yaw damping, N·m per (rad/s)². */
+  /** Tuned rate-squared yaw damping under forward flow. */
   yawDampingQuadratic: number;
   /** Righting moment per degree of heel, N·m. */
   rightingMomentPerDeg: number;

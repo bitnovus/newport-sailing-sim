@@ -23,6 +23,7 @@ import {
 } from "./physics/sails";
 import {
   auxiliaryThrust,
+  hullCrossflowYaw,
   hullDrag,
   heelStep,
   keelForces,
@@ -366,7 +367,12 @@ export class Sim {
 
     // ---- yaw ----
     const yawMoment =
-      rig.total.yaw + keel.yaw + rudder.yaw + yawDamping(b, s.u, s.r) + heelYaw;
+      rig.total.yaw +
+      keel.yaw +
+      rudder.yaw +
+      hullCrossflowYaw(b, s.u, s.v, s.r) +
+      yawDamping(b, s.u, s.r) +
+      heelYaw;
     s.r += (yawMoment / b.yawInertia) * dt;
     s.r = clamp(s.r, -0.8, 0.8);
     s.heading += s.r * dt;
